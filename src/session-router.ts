@@ -1,12 +1,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent, AgentHandle, AgentOptions } from '@deepseek-ai/dsh-agent'
 import { SessionId } from '@deepseek-ai/dsh-session'
-
-export interface SessionIdentity {
-  platform: string
-  selfId: string
-  channelId: string
-}
+import { sessionKeyFor, type SessionIdentity } from './session-id.js'
 
 export interface SessionRouterOptions {
   prefix: string
@@ -15,9 +10,7 @@ export interface SessionRouterOptions {
 }
 
 export function sessionIdFor(identity: SessionIdentity, prefix = 'satori'): SessionId {
-  const parts = [prefix, identity.platform, identity.selfId, identity.channelId]
-    .map(part => encodeURIComponent(part))
-  return SessionId(parts.join(':'))
+  return SessionId(sessionKeyFor(identity, prefix))
 }
 
 export class SessionRouter {

@@ -28,12 +28,13 @@ Use pnpm.
 
 ```sh
 pnpm install
-pnpm typecheck
 pnpm test
 pnpm build
 ```
 
 Keep tests close to behavior. Session identity, event filtering, reply selection, reconnect state, and lifecycle cleanup need regression tests when changed.
+
+The standalone package build uses `tsdown` without DSH type checking because DSH currently has unpublished internal package dependencies. When a change depends on DSH API details, verify it against a current DSH source checkout.
 
 Before opening or updating a PR, run the affected tests and record the tested head SHA and result in the PR description.
 

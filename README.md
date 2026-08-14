@@ -29,7 +29,6 @@ The default Satori base URL is `http://127.0.0.1:5140/satori`.
 git clone https://github.com/Ri0n72Y/dsh-satori.git
 cd dsh-satori
 pnpm install
-pnpm typecheck
 pnpm test
 pnpm build
 ```
@@ -111,7 +110,6 @@ The adapter first checks for a live DSH agent, then tries to resume the persiste
 Read [`AGENTS.md`](AGENTS.md) before changing the plugin. Architecture changes must update the matching Mermaid diagrams in `docs/` in the same PR.
 
 ```sh
-pnpm typecheck
 pnpm test
 pnpm build
 ```

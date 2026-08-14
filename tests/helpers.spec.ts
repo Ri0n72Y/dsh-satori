@@ -1,14 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import { assistantText } from '../src/message.js'
-import { sessionIdFor } from '../src/session-router.js'
+import { sessionKeyFor } from '../src/session-id.js'
 
-describe('sessionIdFor', () => {
+describe('sessionKeyFor', () => {
   it('keeps one stable DSH session per Satori login and channel', () => {
-    expect(String(sessionIdFor({
+    expect(sessionKeyFor({
       platform: 'telegram',
       selfId: 'bot:1',
       channelId: 'room/42',
-    }))).toBe('satori:telegram:bot%3A1:room%2F42')
+    })).toBe('satori:telegram:bot%3A1:room%2F42')
   })
 })
 
