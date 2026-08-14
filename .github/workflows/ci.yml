@@ -17,3 +17,33 @@ jobs:
       - run: pnpm test
       - run: pnpm build
       - run: mkdir -p /tmp/dsh-satori-pack && pnpm pack --pack-destination /tmp/dsh-satori-pack
+
+  dsh-compat:
+    runs-on: ubuntu-latest
+    env:
+      DSH_VERSION: 0.1.0-rc.5
+      DSH_RELEASE_SHA: 47f943859bef60e4160492346772ded9b24f765a
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.19.0
+      - name: Install plugin dependencies without lifecycle scripts
+        run: npm install --ignore-scripts --no-package-lock
+      - name: Install the published DSH compatibility baseline
+        run: >-
+          npm install --ignore-scripts --no-package-lock --no-save
+          @deepseek-ai/cordis@4.0.1
+          @deepseek-ai/dsh-agent@${DSH_VERSION}
+          @deepseek-ai/dsh-llm@${DSH_VERSION}
+          @deepseek-ai/dsh-session@${DSH_VERSION}
+          @deepseek-ai/dsh-session-persistence@${DSH_VERSION}
+          @deepseek-ai/schemastery@3.18.1
+      - name: Typecheck plugin against DSH public APIs
+        run: npx tsc -p tsconfig.compat.json --noEmit
+      - name: Build with DSH public packages present
+        run: npm run build
+      - name: Import built plugin with DSH public packages present
+        run: node --input-type=module -e "await import('./lib/index.js')"
+      - name: Record compatibility baseline
+        run: echo "DSH ${DSH_VERSION} release source ${DSH_RELEASE_SHA}"
