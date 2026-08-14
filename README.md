@@ -23,6 +23,8 @@ See [`docs/architecture.md`](docs/architecture.md), [`docs/data-flow.md`](docs/d
 - Node.js 22.19 or later.
 - A running Satori Server with at least one IM adapter.
 
+The current CI compatibility baseline is pinned to DeepSeek Harness `47f943859bef60e4160492346772ded9b24f765a` (repository version `0.1.0-rc.5`). The compatibility job builds DSH's public host declarations with DSH's own `build:lib:host` configuration and then strict-typechecks this plugin against them.
+
 ## Build
 
 ```sh
@@ -71,6 +73,18 @@ SATORI_TOKEN=your-token
 ```
 
 Omit `SATORI_TOKEN` when the Satori Server does not require authentication.
+
+### DSH workspace
+
+The plugin does not invent a working directory when none is configured. If `SATORI_CWD` is unset, fresh DSH sessions omit `meta.cwd` and preserve DSH's own default semantics.
+
+Set an explicit workspace when IM sessions should be pinned to one directory:
+
+```sh
+SATORI_CWD=/absolute/path/to/safe-workspace
+```
+
+The configured value is trimmed and resolved to an absolute path before it is written to fresh session metadata. For agents that can call filesystem, shell, or other tools, point this at a deliberate controlled workspace and verify the DSH profile's tool and approval policy as well.
 
 ### Admission
 
@@ -157,6 +171,8 @@ Read [`AGENTS.md`](AGENTS.md) before editing. Changes to components, dependencie
 pnpm test
 pnpm build
 ```
+
+CI also checks out the pinned DSH source baseline independently, builds its host declarations, and runs the plugin compatibility typecheck.
 
 ## License
 
