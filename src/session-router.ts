@@ -15,6 +15,7 @@ export interface SessionRouterOptions {
 interface OwnedAgent {
   handle: AgentHandle
   lastUsedAt: number
+  disposeError?: unknown
 }
 
 type AgentUse<T> = (agent: Agent) => T | Promise<T>
@@ -71,8 +72,12 @@ export class SessionRouter {
     const live = this.ctx.agents.get(sessionId)
     const owned = this.owned.get(sessionId)
     if (live) {
-      if (owned && owned.handle.agent === live) owned.lastUsedAt = Date.now()
-      else if (owned) await this.disposeOwned(sessionId, owned)
+      if (owned && owned.handle.agent === live) {
+        if (owned.disposeError !== undefined) throw teardownFailed(sessionId, owned.disposeError)
+        owned.lastUsedAt = Date.now()
+      } else if (owned) {
+        await this.disposeOwned(sessionId, owned)
+      }
       return live
     }
 
@@ -126,8 +131,29 @@ export class SessionRouter {
   }
 
   private async disposeOwned(sessionId: SessionId, entry: OwnedAgent): Promise<void> {
-    await entry.handle.dispose()
-    if (this.owned.get(sessionId) === entry) this.owned.delete(sessionId)
+    if (entry.disposeError !== undefined) {
+      if (this.ctx.agents.get(sessionId) !== entry.handle.agent) {
+        if (this.owned.get(sessionId) === entry) this.owned.delete(sessionId)
+        return
+      }
+      throw teardownFailed(sessionId, entry.disposeError)
+    }
+
+    try {
+      await entry.handle.dispose()
+      if (this.owned.get(sessionId) === entry) this.owned.delete(sessionId)
+    } catch (error) {
+      // DSH AgentHandle teardown is memoized. A second dispose() returns the
+      // same settlement, so retrying a rejected disposer cannot repair it.
+      // The default loop still detaches agent/session in teardown's finally;
+      // release capacity only when the registry confirms that detach happened.
+      if (this.ctx.agents.get(sessionId) !== entry.handle.agent) {
+        if (this.owned.get(sessionId) === entry) this.owned.delete(sessionId)
+      } else {
+        entry.disposeError = error
+      }
+      throw error
+    }
   }
 
   private exclusive<T>(task: () => Promise<T>): Promise<T> {
@@ -135,4 +161,8 @@ export class SessionRouter {
     this.gate = run.then(() => undefined, () => undefined)
     return run
   }
+}
+
+function teardownFailed(sessionId: SessionId, cause: unknown): Error {
+  return new Error(`dsh-satori agent ${sessionId} has a previously failed teardown`, { cause })
 }
