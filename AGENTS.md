@@ -6,9 +6,9 @@
 
 ## Before editing
 
-Read `README.md` and the diagrams in `docs/`. Check the current DSH agent/session APIs and the current Satori protocol before changing integration behavior.
+Read `README-zh.md`, `README.md`, and the diagrams in `docs/`. `README-zh.md` is the source of truth for README structure and wording; keep `README.md` synchronized as its English translation.
 
-Use the existing abstractions before adding a new one. Platform-specific protocol code belongs in Satori or its adapters unless the bridge needs a protocol feature that Satori does not expose.
+Check the current DSH agent/session APIs and the current Satori protocol before changing integration behavior. Use the existing abstractions before adding a new one. Platform-specific protocol code belongs in Satori or its adapters unless the bridge needs a protocol feature that Satori does not expose.
 
 ## Architecture documents
 
