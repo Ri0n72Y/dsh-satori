@@ -1,4 +1,4 @@
-import Element from '@satorijs/element'
+import { parse, text as satoriTextElement } from '@satorijs/element'
 
 interface ElementLike {
   type: string
@@ -9,7 +9,7 @@ interface ElementLike {
 export function plainTextFromSatori(content: string): string {
   let elements: ElementLike[]
   try {
-    elements = Element.parse(content) as ElementLike[]
+    elements = parse(content) as ElementLike[]
   } catch {
     return ''
   }
@@ -17,6 +17,10 @@ export function plainTextFromSatori(content: string): string {
   const parts: string[] = []
   for (const element of elements) appendText(element, parts)
   return parts.join('').trim()
+}
+
+export function satoriPlainText(content: string): string {
+  return satoriTextElement(content).toString()
 }
 
 function appendText(element: ElementLike, parts: string[]): void {
