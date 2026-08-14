@@ -3,10 +3,10 @@ import '@deepseek-ai/dsh-agent'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import Schema from '@deepseek-ai/schemastery'
-import type { Event as SatoriEvent } from '@satorijs/protocol'
 
 import { assistantText } from './message.js'
 import { SatoriClient, type SatoriTarget } from './satori-client.js'
+import type { SatoriEvent } from './satori-protocol.js'
 import { SessionRouter } from './session-router.js'
 
 export const name = 'dsh-satori'

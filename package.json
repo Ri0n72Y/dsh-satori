@@ -33,9 +33,6 @@
       "patch": "./cordis.patch.yml"
     }
   },
-  "dependencies": {
-    "@satorijs/protocol": "2.0.0-alpha.0"
-  },
   "peerDependencies": {
     "@deepseek-ai/cordis": "*",
     "@deepseek-ai/dsh-agent": "*",

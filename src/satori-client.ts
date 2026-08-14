@@ -1,10 +1,4 @@
-import type { Event as SatoriEvent, ServerPayload } from '@satorijs/protocol'
-
-const Opcode = {
-  EVENT: 0,
-  PING: 1,
-  IDENTIFY: 3,
-} as const
+import { SatoriOpcode, type SatoriEvent, type SatoriServerPayload } from './satori-protocol.js'
 
 export interface SatoriClientOptions {
   baseUrl: string
@@ -83,7 +77,7 @@ export class SatoriClient {
       if (socket !== this.socket || this.stopped) return
       this.reconnectAttempt = 0
       socket.send(JSON.stringify({
-        op: Opcode.IDENTIFY,
+        op: SatoriOpcode.IDENTIFY,
         body: {
           token: this.options.token,
           sn: this.sequence,
@@ -111,14 +105,14 @@ export class SatoriClient {
   }
 
   private handlePayload(data: unknown): void {
-    let payload: ServerPayload
+    let payload: SatoriServerPayload
     try {
-      payload = JSON.parse(String(data)) as ServerPayload
+      payload = JSON.parse(String(data)) as SatoriServerPayload
     } catch {
       return
     }
 
-    if (payload.op !== Opcode.EVENT) return
+    if (payload.op !== SatoriOpcode.EVENT) return
 
     const event = payload.body
     this.sequence = event.sn
@@ -133,7 +127,7 @@ export class SatoriClient {
     this.clearPing()
     this.pingTimer = setInterval(() => {
       if (socket !== this.socket || socket.readyState !== WebSocket.OPEN) return
-      socket.send(JSON.stringify({ op: Opcode.PING, body: {} }))
+      socket.send(JSON.stringify({ op: SatoriOpcode.PING, body: {} }))
     }, PING_INTERVAL_MS)
   }
 
