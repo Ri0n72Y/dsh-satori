@@ -32,13 +32,22 @@ jobs:
         run: npm install --ignore-scripts --no-package-lock
       - name: Install the published DSH compatibility baseline
         run: >-
-          npm install --ignore-scripts --no-package-lock --no-save
+          npm install --save-dev --ignore-scripts --no-package-lock
           @deepseek-ai/cordis@4.0.1
           @deepseek-ai/dsh-agent@${DSH_VERSION}
           @deepseek-ai/dsh-llm@${DSH_VERSION}
           @deepseek-ai/dsh-session@${DSH_VERSION}
           @deepseek-ai/dsh-session-persistence@${DSH_VERSION}
           @deepseek-ai/schemastery@3.18.1
+      - name: Verify installed DSH package versions
+        run: >-
+          npm ls
+          @deepseek-ai/cordis
+          @deepseek-ai/dsh-agent
+          @deepseek-ai/dsh-llm
+          @deepseek-ai/dsh-session
+          @deepseek-ai/dsh-session-persistence
+          @deepseek-ai/schemastery
       - name: Typecheck plugin against DSH public APIs
         run: npx tsc -p tsconfig.compat.json --noEmit
       - name: Build with DSH public packages present
