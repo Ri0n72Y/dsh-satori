@@ -23,6 +23,8 @@ flowchart LR
 - Node.js 22.19 或更高版本。
 - 一个正在运行的 Satori Server，并至少配置一个 IM adapter。
 
+当前 CI 的 DSH API 兼容基线固定为 DeepSeek Harness `47f943859bef60e4160492346772ded9b24f765a`（仓库版本 `0.1.0-rc.5`）。兼容 job 会使用 DSH 自己的 `build:lib:host` 构建公开声明，再对本插件执行严格 TypeScript 检查。
+
 ## 构建
 
 ```sh
@@ -71,6 +73,18 @@ SATORI_TOKEN=your-token
 ```
 
 如果 Satori Server 不要求认证，可以不设置 `SATORI_TOKEN`。
+
+### DSH 工作目录
+
+插件不会在未配置时自行选择工作目录。未设置 `SATORI_CWD` 时，新建 DSH session 不写入 `meta.cwd`，保持 DSH 自身的默认语义。
+
+需要让 IM session 固定使用某个工作区时显式配置：
+
+```sh
+SATORI_CWD=/absolute/path/to/safe-workspace
+```
+
+配置值会先去除首尾空白，再解析成绝对路径后写入新 session 的 `meta.cwd`。对可调用文件、Shell 或其他工具的 Agent，应将这里指向明确的受控工作区，并同时确认 DSH profile 的工具与审批策略。
 
 ### 准入控制
 
@@ -157,6 +171,8 @@ sequenceDiagram
 pnpm test
 pnpm build
 ```
+
+CI 还会独立 checkout 固定的 DSH source baseline、构建 host declaration，并运行插件兼容类型检查。
 
 ## License
 
