@@ -107,6 +107,8 @@ Self messages and senders marked as bots by Satori are still ignored.
 
 Satori carries `message.content` on the wire as serialized elements. The plugin parses it with Satori's official `@satorijs/element` parser and passes only text nodes to DSH. Images, mentions, quotes, and other non-text elements are not sent to the model in the MVP. Messages without text are ignored.
 
+Plain DSH replies are serialized through the same Satori element library before sending. Model output such as `<at/>` or `<img/>` therefore remains visible text instead of being interpreted as Satori message elements.
+
 ## Session mapping
 
 Each Satori login, channel, and sender maps to a stable DSH session. The SessionId is derived from the raw identity fields with SHA-256 and keeps only a short readable platform label:
@@ -136,6 +138,7 @@ sequenceDiagram
     D-->>P: inbox/claimed(messageId, turn)
     D-->>P: assistant/message(turn)
     D-->>P: turn/end(turn, reason)
+    P->>P: final text -> Satori text serialization
     P->>S: message.create only for completed/max-tokens
     S-->>IM: text reply
 ```
