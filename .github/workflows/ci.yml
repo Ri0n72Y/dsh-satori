@@ -14,6 +14,10 @@ jobs:
           node-version: 22.19.0
       - run: corepack enable
       - run: pnpm install --no-frozen-lockfile
+      - uses: actions/upload-artifact@v4
+        with:
+          name: generated-lockfile
+          path: pnpm-lock.yaml
       - run: pnpm test
       - run: pnpm build
       - run: mkdir -p /tmp/dsh-satori-pack && pnpm pack --pack-destination /tmp/dsh-satori-pack
