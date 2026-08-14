@@ -3,13 +3,13 @@ import '@deepseek-ai/dsh-agent'
 import '@deepseek-ai/dsh-session-persistence'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import Schema from '@deepseek-ai/schemastery'
-import { resolve } from 'node:path'
 
 import { compileAdmissionPolicy, inboundMessage } from './inbound.js'
 import { assistantText } from './message.js'
 import { ReplyTracker } from './reply-tracker.js'
 import { SatoriClient } from './satori-client.js'
 import { SessionRouter } from './session-router.js'
+import { resolveWorkspace } from './workspace.js'
 
 export const name = 'dsh-satori'
 export const inject = ['agents', 'sessionPersistence']
@@ -37,7 +37,7 @@ export const Config: Schema<Config> = Schema.object({
   sessionPrefix: Schema.string()
     .description('Prefix used for deterministic DSH session IDs')
     .default('satori'),
-  cwd: Schema.string().description('Working directory for newly created DSH sessions'),
+  cwd: Schema.string().description('Optional working directory for newly created DSH sessions'),
   provider: Schema.string().description('Optional DSH model provider override'),
   model: Schema.string().description('Optional DSH model override'),
   allowedUsers: Schema.array(String)
@@ -81,7 +81,7 @@ export function apply(ctx: Context, config: Config): void {
 
   const router = new SessionRouter(ctx, {
     prefix: config.sessionPrefix,
-    cwd: resolve(config.cwd ?? process.cwd()),
+    cwd: resolveWorkspace(config.cwd),
     agentOptions,
     maxLiveAgents: config.maxLiveAgents,
     idleTtlMs: config.idleTtlMs,
