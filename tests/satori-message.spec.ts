@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { plainTextFromSatori } from '../src/satori-message.js'
+import { plainTextFromSatori, satoriPlainText } from '../src/satori-message.js'
 
 describe('plainTextFromSatori', () => {
   it('uses the Satori element parser and keeps only visible text nodes', () => {
@@ -14,5 +14,12 @@ describe('plainTextFromSatori', () => {
 
   it('returns empty text for a non-text-only message', () => {
     expect(plainTextFromSatori('<img src="https://example.test/a.png"/>')).toBe('')
+  })
+})
+
+describe('satoriPlainText', () => {
+  it('serializes assistant output as a text element instead of executable Satori markup', () => {
+    expect(satoriPlainText('hello <at id="42"/> & <img src="x"/>'))
+      .toBe('hello &lt;at id="42"/&gt; &amp; &lt;img src="x"/&gt;')
   })
 })
