@@ -6,6 +6,11 @@ interface FakeAgent {
   status: 'idle' | 'running'
 }
 
+interface FakeCreateOptions {
+  sessionId: string
+  meta?: { cwd?: string }
+}
+
 function identity(userId: string) {
   return { platform: 'telegram', selfId: 'bot', channelId: 'room', userId }
 }
@@ -14,8 +19,10 @@ function harness(options: {
   failDispose?: boolean
   detachOnDisposeFailure?: boolean
   delayedCreate?: boolean
+  cwd?: string | null
 } = {}) {
   const live = new Map<string, FakeAgent>()
+  const creates: FakeCreateOptions[] = []
   let createCount = 0
   let disposeCount = 0
   let maxObserved = 0
@@ -28,21 +35,22 @@ function harness(options: {
     get(id: string) {
       return live.get(id)
     },
-    async create({ sessionId }: { sessionId: string }) {
+    async create(createOptions: FakeCreateOptions) {
       createCount += 1
+      creates.push(createOptions)
       await createGate
-      const agent: FakeAgent = { id: sessionId, status: 'idle' }
-      live.set(sessionId, agent)
+      const agent: FakeAgent = { id: createOptions.sessionId, status: 'idle' }
+      live.set(createOptions.sessionId, agent)
       maxObserved = Math.max(maxObserved, live.size)
 
       let disposing: Promise<void> | undefined
       const dispose = () => disposing ??= (async () => {
         disposeCount += 1
         if (options.failDispose) {
-          if (options.detachOnDisposeFailure) live.delete(sessionId)
+          if (options.detachOnDisposeFailure) live.delete(createOptions.sessionId)
           throw new Error('dispose failed')
         }
-        live.delete(sessionId)
+        live.delete(createOptions.sessionId)
       })()
 
       return { agent, dispose }
@@ -57,7 +65,7 @@ function harness(options: {
   }
   const router = new SessionRouter(ctx as never, {
     prefix: 'satori',
-    cwd: '/tmp',
+    cwd: options.cwd === null ? undefined : (options.cwd ?? '/tmp'),
     maxLiveAgents: 1,
     idleTtlMs: 60_000,
   })
@@ -65,11 +73,29 @@ function harness(options: {
     router,
     live,
     releaseCreate: () => releaseCreate?.(),
+    creates: () => [...creates],
     stats: () => ({ createCount, disposeCount, maxObserved }),
   }
 }
 
 describe('SessionRouter', () => {
+  it('omits cwd metadata when the plugin workspace is not configured', async () => {
+    const { router, creates } = harness({ cwd: null })
+    await router.withAgent(identity('one'), () => undefined)
+
+    expect(creates()).toHaveLength(1)
+    expect(creates()[0]?.meta).toEqual({})
+    await router.dispose()
+  })
+
+  it('passes an explicitly configured workspace into fresh DSH session metadata', async () => {
+    const { router, creates } = harness({ cwd: '/safe/workspace' })
+    await router.withAgent(identity('one'), () => undefined)
+
+    expect(creates()[0]?.meta).toEqual({ cwd: '/safe/workspace' })
+    await router.dispose()
+  })
+
   it('keeps acquisition plus synchronous followup inside one capacity critical section', async () => {
     const { router, stats } = harness()
     const first = router.withAgent(identity('one'), (agent) => {
