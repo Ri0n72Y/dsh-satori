@@ -13,6 +13,6 @@ jobs:
         with:
           node-version: 22.19.0
       - run: corepack enable
-      - run: pnpm install --no-frozen-lockfile
+      - run: pnpm install --no-frozen-lockfile --config.auto-install-peers=false
       - run: pnpm test
       - run: pnpm build
