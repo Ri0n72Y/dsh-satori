@@ -6,7 +6,7 @@ import { sessionKeyFor, type SessionIdentity } from './session-id.js'
 
 export interface SessionRouterOptions {
   prefix: string
-  cwd: string
+  cwd?: string
   agentOptions?: AgentOptions
   maxLiveAgents: number
   idleTtlMs: number
@@ -93,7 +93,7 @@ export class SessionRouter {
         })
       : await this.ctx.agents.create({
           sessionId,
-          meta: { cwd: this.options.cwd },
+          meta: this.options.cwd === undefined ? {} : { cwd: this.options.cwd },
           agentOptions: this.options.agentOptions,
         })
 
