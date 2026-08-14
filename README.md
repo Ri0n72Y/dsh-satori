@@ -23,7 +23,7 @@ See [`docs/architecture.md`](docs/architecture.md), [`docs/data-flow.md`](docs/d
 - Node.js 22.19 or later.
 - A running Satori Server with at least one IM adapter.
 
-The current CI compatibility baseline is pinned to DeepSeek Harness `47f943859bef60e4160492346772ded9b24f765a` (repository version `0.1.0-rc.5`). The compatibility job builds DSH's public host declarations with DSH's own `build:lib:host` configuration and then strict-typechecks this plugin against them.
+The current CI API-compatibility baseline is pinned to DeepSeek Harness `47f943859bef60e4160492346772ded9b24f765a` (repository version `0.1.0-rc.5`). The compatibility job builds DSH's public host declarations with DSH's own `build:lib:host` configuration and then strict-typechecks this plugin against them. This protects the compile-time integration boundary; a real DSH + Satori runtime round trip remains an explicit E2E gate before release.
 
 ## Build
 
