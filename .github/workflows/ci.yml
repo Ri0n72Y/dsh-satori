@@ -39,9 +39,11 @@ jobs:
           persist-credentials: false
       - name: Verify DSH source baseline
         run: test "$(git -C .dsh-source rev-parse HEAD)" = "${DSH_RELEASE_SHA}"
-      - name: Install DSH workspace dependencies for source type resolution
+      - name: Install DSH workspace dependencies
         run: pnpm --dir .dsh-source install --frozen-lockfile --ignore-scripts
-      - name: Typecheck plugin against pinned DSH source APIs
+      - name: Build DSH host declarations with upstream configuration
+        run: pnpm --dir .dsh-source build:lib:host
+      - name: Typecheck plugin against built DSH public declarations
         run: pnpm exec tsc -p tsconfig.compat.json --noEmit
       - name: Build after DSH compatibility typecheck
         run: pnpm build
