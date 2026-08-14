@@ -1,0 +1,6 @@
+- insert:
+    - id: satori
+      name: dsh-satori
+      config:
+        baseUrl: !!js process.env.SATORI_BASE_URL ?? 'http://127.0.0.1:5140/satori'
+        token: !!js process.env.SATORI_TOKEN
