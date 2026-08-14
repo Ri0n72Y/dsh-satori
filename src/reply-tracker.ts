@@ -18,6 +18,10 @@ export interface CompletedReply {
   text: string
 }
 
+export interface TurnEndLike {
+  kind: string
+}
+
 export class ReplyTracker<TAgent extends AgentLike> {
   private readonly pending = new Map<string, PendingReply<TAgent>>()
   private readonly turns = new Map<string, ClaimedTurn<TAgent>>()
@@ -38,15 +42,28 @@ export class ReplyTracker<TAgent extends AgentLike> {
     if (pending?.agent === agent) this.pending.delete(messageId)
   }
 
+  discardAbsentPending(agent: TAgent, presentMessageIds: ReadonlySet<string>): void {
+    for (const [messageId, pending] of this.pending) {
+      if (pending.agent === agent && !presentMessageIds.has(messageId)) this.pending.delete(messageId)
+    }
+  }
+
   assistant(sessionId: string, turn: number, text: string): void {
     const claimed = this.turns.get(turnKey(sessionId, turn))
     if (claimed) claimed.text = text
   }
 
-  end(sessionId: string, turn: number): CompletedReply | undefined {
+  failTurn(agent: TAgent, turn: number): void {
+    const key = turnKey(agent.id, turn)
+    const claimed = this.turns.get(key)
+    if (claimed?.agent === agent) this.turns.delete(key)
+  }
+
+  end(sessionId: string, turn: number, reason: TurnEndLike): CompletedReply | undefined {
     const key = turnKey(sessionId, turn)
     const claimed = this.turns.get(key)
     this.turns.delete(key)
+    if (reason.kind !== 'completed' && reason.kind !== 'max-tokens') return
     if (!claimed?.text) return
     return { target: claimed.target, text: claimed.text }
   }

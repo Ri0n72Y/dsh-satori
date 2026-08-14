@@ -5,7 +5,7 @@ import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import Schema from '@deepseek-ai/schemastery'
 import { resolve } from 'node:path'
 
-import { inboundMessage, type AdmissionPolicy } from './inbound.js'
+import { compileAdmissionPolicy, inboundMessage } from './inbound.js'
 import { assistantText } from './message.js'
 import { ReplyTracker } from './reply-tracker.js'
 import { SatoriClient } from './satori-client.js'
@@ -87,40 +87,58 @@ export function apply(ctx: Context, config: Config): void {
     idleTtlMs: config.idleTtlMs,
   })
   const replies = new ReplyTracker()
-  const admission: AdmissionPolicy = {
+  const admission = compileAdmissionPolicy({
     allowedUsers: config.allowedUsers,
     allowedChannels: config.allowedChannels,
     allowedLogins: config.allowedLogins,
     unsafeAllowAll: config.unsafeAllowAll,
-  }
+  })
   let closed = false
 
   const disposeEventHandler = client.onEvent(async (event) => {
+    if (closed) return
     const inbound = inboundMessage(event, admission)
     if (!inbound) return
 
-    const agent = await router.get(inbound.identity)
-    if (closed) return
+    await router.withAgent(inbound.identity, (agent) => {
+      if (closed) return
+      if (ctx.agents.get(agent.id) !== agent) {
+        throw new Error(`dsh-satori agent ${agent.id} was disposed before followup`)
+      }
 
-    const message = createUserMessage({
-      source: { kind: 'user' },
-      content: [{ type: 'text', text: inbound.text }],
+      const message = createUserMessage({
+        source: { kind: 'user' },
+        content: [{ type: 'text', text: inbound.text }],
+      })
+      replies.queue(agent, message.id, inbound.target)
+      try {
+        agent.followup(message)
+      } catch (error) {
+        replies.discard(agent, message.id)
+        throw error
+      }
     })
-    replies.queue(agent, message.id, inbound.target)
-    try {
-      agent.followup(message)
-    } catch (error) {
-      replies.discard(agent, message.id)
-      throw error
-    }
   })
 
   ctx.on('agent/inbox/claimed', ({ agent, message, turn }) => {
+    if (closed) return
     replies.claim(agent, message.id, turn)
   })
 
   ctx.on('agent/inbox/discarded', ({ agent, message }) => {
+    if (closed) return
     replies.discard(agent, message.id)
+  })
+
+  ctx.on('agent/error', ({ agent, turn, error }) => {
+    if (closed) return
+    replies.failTurn(agent, turn)
+    const present = new Set([
+      ...agent.inbox.nextTurn.map(message => message.id),
+      ...agent.inbox.nextStep.map(message => message.id),
+    ])
+    replies.discardAbsentPending(agent, present)
+    if (router.owns(agent)) logger.warn(`dsh-satori: agent ${agent.id} turn ${turn} failed: ${String(error)}`)
   })
 
   ctx.on('agent/disposed', ({ agent }) => {
@@ -128,6 +146,7 @@ export function apply(ctx: Context, config: Config): void {
   })
 
   ctx.on('session/event', (session, event) => {
+    if (closed) return
     if (event.type === 'assistant/message') {
       const text = assistantText(event.data.message)
       if (text) replies.assistant(session.id, event.data.turn, text)
@@ -135,11 +154,11 @@ export function apply(ctx: Context, config: Config): void {
     }
 
     if (event.type !== 'turn/end') return
-    const reply = replies.end(session.id, event.data.turn)
+    const reply = replies.end(session.id, event.data.turn, event.data.reason)
     if (!reply) return
 
     void client.sendMessage(reply.target, reply.text).catch((error) => {
-      logger.warn(`dsh-satori: failed to send assistant reply: ${String(error)}`)
+      if (!closed) logger.warn(`dsh-satori: failed to send assistant reply: ${String(error)}`)
     })
   })
 
@@ -148,14 +167,15 @@ export function apply(ctx: Context, config: Config): void {
     return async () => {
       closed = true
       disposeEventHandler()
-      await client.stop()
       replies.clear()
+      await client.stop()
       await router.dispose()
     }
   })
 }
 
-export { inboundMessage, peerKey } from './inbound.js'
+export { compileAdmissionPolicy, inboundMessage, peerKey } from './inbound.js'
+export { plainTextFromSatori } from './satori-message.js'
 export { ReplyTracker } from './reply-tracker.js'
 export { SatoriClient } from './satori-client.js'
 export { SessionRouter, sessionIdFor } from './session-router.js'

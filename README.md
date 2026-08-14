@@ -2,9 +2,9 @@
 
 [中文](README-zh.md) | [English](README.md)
 
-`dsh-satori` is a lightweight plugin connecting DeepSeek Harness and Satori. Satori handles IM platforms such as Telegram, Discord, and Lark. The plugin admits configured senders, maps their messages to DSH sessions, and sends the final reply from the correlated DSH turn back to the original conversation.
+`dsh-satori` is a lightweight bridge between DeepSeek Harness and Satori. Satori owns access to IM platforms such as Telegram, Discord, and Lark; the plugin owns admission, DSH session mapping, and reply correlation.
 
-The current MVP handles text messages only. It uses Satori's `/v1/events` WebSocket and `/v1/message.create` API directly and does not reimplement platform protocols inside the plugin.
+The current MVP handles text only and uses Satori's `/v1/events` WebSocket and `/v1/message.create` API directly.
 
 ## Architecture
 
@@ -15,60 +15,48 @@ flowchart LR
     Plugin <--> DSH[DeepSeek Harness]
 ```
 
-See [`docs/architecture.md`](docs/architecture.md), [`docs/data-flow.md`](docs/data-flow.md), and [`docs/uml.md`](docs/uml.md) for the maintained design diagrams. These Mermaid diagrams must be updated together with the code.
+See [`docs/architecture.md`](docs/architecture.md), [`docs/data-flow.md`](docs/data-flow.md), and [`docs/uml.md`](docs/uml.md) for the detailed design.
 
 ## Requirements
 
 - DeepSeek Harness with an agent loop and session persistence configured.
-- Node.js 22.19 or newer, matching the current DSH runtime requirement.
-- A running Satori Server with at least one IM adapter configured.
-
-Default Satori address:
-
-```text
-http://127.0.0.1:5140/satori
-```
+- Node.js 22.19 or later.
+- A running Satori Server with at least one IM adapter.
 
 ## Build
 
 ```sh
 git clone https://github.com/Ri0n72Y/dsh-satori.git
 cd dsh-satori
-pnpm install
+pnpm install --frozen-lockfile
 pnpm test
 pnpm build
 ```
 
-Build output is written to `lib/`.
+The build output is written to `lib/`.
 
 ## Install into DSH
 
-### Install from a local directory
+Local directory:
 
 ```sh
 dsh plugin --profile web add /absolute/path/to/dsh-satori
 ```
 
-### Install from GitHub
+GitHub:
 
 ```sh
 dsh plugin --profile web add github:Ri0n72Y/dsh-satori
 ```
 
-Git installs use `prepare` to compile TypeScript. If pnpm blocks the build script, add this to `$DSH_HOME/profiles/web/pnpm-workspace.yaml`:
+Git installs compile TypeScript through `prepare`. If pnpm blocks the build script, add this to `$DSH_HOME/profiles/web/pnpm-workspace.yaml`:
 
 ```yaml
 allowBuilds:
   dsh-satori: true
 ```
 
-To pin a version, install a specific commit:
-
-```sh
-dsh plugin --profile web add github:Ri0n72Y/dsh-satori#<commit-sha>
-```
-
-After installation, inspect the composed configuration and start DSH:
+Then inspect the composed config and start DSH:
 
 ```sh
 dsh --profile web --dump-config
@@ -77,81 +65,59 @@ dsh --profile web
 
 ## Configure Satori
 
-Basic connection:
-
 ```sh
 SATORI_BASE_URL=http://127.0.0.1:5140/satori
 SATORI_TOKEN=your-token
 ```
 
-`SATORI_TOKEN` can be omitted when the Satori Server does not require authentication.
+Omit `SATORI_TOKEN` when the Satori Server does not require authentication.
 
-### Admission control
+### Admission
 
-The plugin denies external senders by default. Configure at least one allowed user or channel:
+External senders are denied by default. Allow at least a user or a channel:
 
 ```sh
 SATORI_ALLOWED_USERS=telegram:123456
-```
-
-or:
-
-```sh
 SATORI_ALLOWED_CHANNELS=discord:987654321
 ```
 
-Separate multiple values with commas:
+Separate multiple values with commas. IDs may contain `:`, for example:
 
 ```sh
-SATORI_ALLOWED_USERS=telegram:123456,lark:ou_xxx
+SATORI_ALLOWED_USERS=matrix:@alice:example.org
 ```
 
-You can also restrict which Satori bot login may drive DSH:
+Already URI-encoded IDs are normalized before comparison as well.
+
+You may also restrict which Satori login can drive DSH:
 
 ```sh
 SATORI_ALLOWED_LOGINS=telegram:my_bot_id
 ```
 
-These values use `<platform>:<id>`. The platform and ID parts are URI-encoded independently inside the plugin.
-
-For trusted testing only, admission checks can be disabled temporarily:
+For trusted test environments only:
 
 ```sh
 SATORI_UNSAFE_ALLOW_ALL=1
 ```
 
-Messages from the bot itself and senders marked as bots by Satori are still ignored.
+Self messages and senders marked as bots by Satori are still ignored.
 
-The same options can be configured directly in the profile:
+## Text messages
 
-```yaml
-- id: satori
-  name: dsh-satori
-  config:
-    baseUrl: http://127.0.0.1:5140/satori
-    token: your-token
-    allowedUsers:
-      - telegram:123456
-    allowedChannels: []
-    allowedLogins: []
-    sessionPrefix: satori
-    maxLiveAgents: 32
-    idleTtlMs: 900000
-```
-
-`provider` and `model` are optional. When unset, the plugin uses the model route supplied by the current DSH composition.
+Satori carries `message.content` on the wire as serialized elements. The plugin parses it with Satori's official `@satorijs/element` parser and passes only text nodes to DSH. Images, mentions, quotes, and other non-text elements are not sent to the model in the MVP. Messages without text are ignored.
 
 ## Session mapping
 
-The MVP creates an isolated session for each sender in each channel:
+Each Satori login, channel, and sender maps to a stable DSH session. The SessionId is derived from the raw identity fields with SHA-256 and keeps only a short readable platform label:
 
 ```text
-<sessionPrefix>:<platform>:<selfId>:<channelId>:<userId>
+<bounded-prefix>:<bounded-platform>:<identity-hash>
 ```
 
-Different users in the same group therefore do not share DSH history. On an incoming message, the plugin first checks for a live Agent. If none exists, it checks session persistence, resumes an existing session, or creates a new one.
+This bounds the session id and avoids writing complete external user/channel IDs into persistence directory names.
 
-The plugin owns at most 32 live Agents by default. At capacity it releases the oldest idle Agent first; idle Agents older than `idleTtlMs` are reclaimed during capacity checks. Persisted sessions can be resumed later.
+The plugin owns at most 32 live agents by default. Agent resolution/creation and the synchronous `followup()` are kept in one capacity critical section. Capacity eviction only disposes idle agents, with agents older than `idleTtlMs` preferred on the next capacity check.
 
 ## Message path
 
@@ -162,26 +128,27 @@ sequenceDiagram
     participant P as dsh-satori
     participant D as DSH Agent
 
-    IM->>S: text message
-    S->>P: snake_case message-created
-    P->>P: normalize + admission check
+    IM->>S: message
+    S->>P: message-created
+    P->>P: normalize snake_case
+    P->>P: parse elements + admission
     P->>D: followup(user message)
     D-->>P: inbox/claimed(messageId, turn)
     D-->>P: assistant/message(turn)
-    D-->>P: turn/end(turn)
-    P->>S: message.create
+    D-->>P: turn/end(turn, reason)
+    P->>S: message.create only for completed/max-tokens
     S-->>IM: text reply
 ```
 
-A reply is sent only for the DSH turn correlated with the originating Satori message. Output produced by another driver of the same session is not forwarded to IM.
+Only the DSH turn correlated to the original Satori input can be forwarded. `error`, `aborted`, `blocked`, and `interrupted` turns do not leak an earlier assistant message as a final reply. `max-tokens` sends the committed text that exists.
 
-## Protocol compatibility
+## Reconnect
 
-The plugin targets the Satori v1 HTTP/WebSocket surface. The current Satori Server sends snake_case wire fields; `SatoriClient` normalizes them to camelCase before business logic sees the event.
+The plugin keeps the last received Satori event sequence and sends it as `sn` on the next IDENTIFY. A connection resets its retry counter only after `READY`. Ordinary disconnects use exponential backoff. A Satori `4004 invalid token` close stops automatic reconnect and records the reason until configuration is fixed or the plugin is reloaded.
 
 ## Development
 
-Read [`AGENTS.md`](AGENTS.md) before making changes. If code changes component relationships, dependencies, message flow, session identity, lifecycle, authentication, admission, retry behavior, or ownership, update the matching Mermaid diagram in the same PR.
+Read [`AGENTS.md`](AGENTS.md) before editing. Changes to components, dependencies, message flow, session identity, lifecycle, authentication, reconnect behavior, or ownership must update the relevant Mermaid diagram in the same PR.
 
 ```sh
 pnpm test

@@ -1,11 +1,19 @@
 import type { SatoriTarget } from './satori-client.js'
+import { plainTextFromSatori } from './satori-message.js'
 import type { SatoriEvent } from './satori-protocol.js'
 import type { SessionIdentity } from './session-id.js'
 
-export interface AdmissionPolicy {
+export interface AdmissionConfig {
   allowedUsers: readonly string[]
   allowedChannels: readonly string[]
   allowedLogins: readonly string[]
+  unsafeAllowAll: boolean
+}
+
+export interface AdmissionPolicy {
+  allowedUsers: ReadonlySet<string>
+  allowedChannels: ReadonlySet<string>
+  allowedLogins: ReadonlySet<string>
   unsafeAllowAll: boolean
 }
 
@@ -17,6 +25,15 @@ export interface InboundMessage {
 
 export function peerKey(platform: string, id: string): string {
   return `${encodeURIComponent(platform)}:${encodeURIComponent(id)}`
+}
+
+export function compileAdmissionPolicy(config: AdmissionConfig): AdmissionPolicy {
+  return {
+    allowedUsers: canonicalPeers(config.allowedUsers),
+    allowedChannels: canonicalPeers(config.allowedChannels),
+    allowedLogins: canonicalPeers(config.allowedLogins),
+    unsafeAllowAll: config.unsafeAllowAll,
+  }
 }
 
 export function inboundMessage(
@@ -31,23 +48,51 @@ export function inboundMessage(
   const user = event.user ?? event.message?.user
   const userId = user?.id
   const selfUserId = event.login.user?.id
-  const text = event.message?.content?.trim()
+  const content = event.message?.content
 
-  if (!channelId || !selfId || !platform || !userId || !text) return
+  if (!channelId || !selfId || !platform || !userId || !content) return
   if (selfUserId === userId || user?.isBot === true) return
 
-  const loginAllowed = policy.allowedLogins.length === 0
-    || policy.allowedLogins.includes(peerKey(platform, selfId))
+  const loginAllowed = policy.allowedLogins.size === 0
+    || policy.allowedLogins.has(peerKey(platform, selfId))
   if (!loginAllowed) return
 
   const admitted = policy.unsafeAllowAll
-    || policy.allowedUsers.includes(peerKey(platform, userId))
-    || policy.allowedChannels.includes(peerKey(platform, channelId))
+    || policy.allowedUsers.has(peerKey(platform, userId))
+    || policy.allowedChannels.has(peerKey(platform, channelId))
   if (!admitted) return
+
+  const text = plainTextFromSatori(content)
+  if (!text) return
 
   return {
     target: { platform, selfId, channelId },
     identity: { platform, selfId, channelId, userId },
     text,
+  }
+}
+
+function canonicalPeers(values: readonly string[]): ReadonlySet<string> {
+  const result = new Set<string>()
+  for (const value of values) {
+    const canonical = canonicalPeer(value.trim())
+    if (canonical) result.add(canonical)
+  }
+  return result
+}
+
+function canonicalPeer(value: string): string | undefined {
+  const separator = value.indexOf(':')
+  if (separator <= 0 || separator === value.length - 1) return
+  const platform = decodeSegment(value.slice(0, separator))
+  const id = decodeSegment(value.slice(separator + 1))
+  return peerKey(platform, id)
+}
+
+function decodeSegment(value: string): string {
+  try {
+    return decodeURIComponent(value)
+  } catch {
+    return value
   }
 }

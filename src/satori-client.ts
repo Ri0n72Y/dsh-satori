@@ -4,6 +4,10 @@ export interface SatoriClientOptions {
   baseUrl: string
   token?: string
   onError?: (error: unknown) => void
+  webSocketFactory?: (url: string) => WebSocketLike
+  fetchImpl?: typeof fetch
+  reconnectBaseMs?: number
+  reconnectMaxMs?: number
 }
 
 export interface SatoriTarget {
@@ -12,20 +16,44 @@ export interface SatoriTarget {
   channelId: string
 }
 
+interface CloseEventLike {
+  code?: number
+  reason?: string
+}
+
+interface MessageEventLike {
+  data: unknown
+}
+
+interface WebSocketLike {
+  readonly readyState: number
+  send(data: string): void
+  close(code?: number, reason?: string): void
+  addEventListener(type: 'open', listener: () => void): void
+  addEventListener(type: 'message', listener: (event: MessageEventLike) => void): void
+  addEventListener(type: 'close', listener: (event: CloseEventLike) => void): void
+  addEventListener(type: 'error', listener: () => void): void
+}
+
 type EventHandler = (event: SatoriEvent) => void | Promise<void>
 
 const PING_INTERVAL_MS = 10_000
+const RECONNECT_BASE_MS = 1_000
 const RECONNECT_MAX_MS = 30_000
+const OPEN = 1
+const INVALID_TOKEN_CLOSE_CODE = 4004
 
 export class SatoriClient {
-  private socket?: WebSocket
+  private socket?: WebSocketLike
   private reconnectTimer?: ReturnType<typeof setTimeout>
   private pingTimer?: ReturnType<typeof setInterval>
   private sequence?: number
   private reconnectAttempt = 0
   private stopped = true
+  private reconnectBlocked = false
   private readonly handlers = new Set<EventHandler>()
-  private readonly pending = new Set<Promise<void>>()
+  private readonly pendingHandlers = new Set<Promise<void>>()
+  private readonly outbound = new Map<Promise<void>, AbortController>()
 
   constructor(private readonly options: SatoriClientOptions) {}
 
@@ -37,6 +65,7 @@ export class SatoriClient {
   start(): void {
     if (!this.stopped) return
     this.stopped = false
+    this.reconnectBlocked = false
     this.connect()
   }
 
@@ -47,11 +76,24 @@ export class SatoriClient {
     const socket = this.socket
     this.socket = undefined
     socket?.close(1000, 'dsh-satori stopped')
-    await Promise.allSettled([...this.pending])
+    for (const controller of this.outbound.values()) controller.abort()
+    await Promise.allSettled([...this.pendingHandlers, ...this.outbound.keys()])
   }
 
-  async sendMessage(target: SatoriTarget, content: string): Promise<void> {
-    const response = await fetch(this.endpoint('v1/message.create'), {
+  sendMessage(target: SatoriTarget, content: string): Promise<void> {
+    if (this.stopped || this.reconnectBlocked) {
+      return Promise.reject(new Error('dsh-satori Satori client is not available'))
+    }
+
+    const controller = new AbortController()
+    const pending = this.performSend(target, content, controller.signal)
+    this.outbound.set(pending, controller)
+    void pending.finally(() => this.outbound.delete(pending)).catch(() => undefined)
+    return pending
+  }
+
+  private async performSend(target: SatoriTarget, content: string, signal: AbortSignal): Promise<void> {
+    const response = await (this.options.fetchImpl ?? fetch)(this.endpoint('v1/message.create'), {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
@@ -63,6 +105,7 @@ export class SatoriClient {
         channel_id: target.channelId,
         content,
       }),
+      signal,
     })
 
     if (!response.ok) {
@@ -72,11 +115,11 @@ export class SatoriClient {
   }
 
   private connect(): void {
-    if (this.stopped) return
+    if (this.stopped || this.reconnectBlocked) return
 
-    let socket: WebSocket
+    let socket: WebSocketLike
     try {
-      socket = new WebSocket(this.eventsUrl())
+      socket = this.options.webSocketFactory?.(this.eventsUrl()) ?? new WebSocket(this.eventsUrl())
     } catch (error) {
       this.report(error)
       this.scheduleReconnect()
@@ -86,7 +129,6 @@ export class SatoriClient {
 
     socket.addEventListener('open', () => {
       if (socket !== this.socket || this.stopped) return
-      this.reconnectAttempt = 0
       socket.send(JSON.stringify({
         op: SatoriOpcode.IDENTIFY,
         body: {
@@ -102,10 +144,19 @@ export class SatoriClient {
       this.handlePayload(message.data)
     })
 
-    socket.addEventListener('close', () => {
+    socket.addEventListener('close', (event) => {
       if (socket !== this.socket) return
       this.socket = undefined
       this.clearPing()
+      if (this.stopped) return
+
+      const code = event.code ?? 0
+      const reason = event.reason ?? ''
+      this.report(new Error(`Satori WebSocket closed: code=${code}${reason ? ` reason=${reason}` : ''}`))
+      if (code === INVALID_TOKEN_CLOSE_CODE) {
+        this.reconnectBlocked = true
+        return
+      }
       this.scheduleReconnect()
     })
 
@@ -117,7 +168,13 @@ export class SatoriClient {
 
   private handlePayload(data: unknown): void {
     const payload = decodeSatoriServerPayload(data)
-    if (!payload || payload.op !== SatoriOpcode.EVENT) return
+    if (!payload) return
+
+    if (payload.op === SatoriOpcode.READY) {
+      this.reconnectAttempt = 0
+      return
+    }
+    if (payload.op !== SatoriOpcode.EVENT) return
 
     const event = payload.body
     this.sequence = event.sn
@@ -126,23 +183,25 @@ export class SatoriClient {
 
   private runHandler(handler: EventHandler, event: SatoriEvent): void {
     const pending = Promise.resolve().then(() => handler(event))
-    this.pending.add(pending)
+    this.pendingHandlers.add(pending)
     void pending.catch(error => this.report(error)).finally(() => {
-      this.pending.delete(pending)
+      this.pendingHandlers.delete(pending)
     })
   }
 
-  private startPing(socket: WebSocket): void {
+  private startPing(socket: WebSocketLike): void {
     this.clearPing()
     this.pingTimer = setInterval(() => {
-      if (socket !== this.socket || socket.readyState !== WebSocket.OPEN) return
+      if (socket !== this.socket || socket.readyState !== OPEN) return
       socket.send(JSON.stringify({ op: SatoriOpcode.PING, body: {} }))
     }, PING_INTERVAL_MS)
   }
 
   private scheduleReconnect(): void {
-    if (this.stopped || this.reconnectTimer) return
-    const delay = Math.min(1000 * 2 ** this.reconnectAttempt, RECONNECT_MAX_MS)
+    if (this.stopped || this.reconnectBlocked || this.reconnectTimer) return
+    const base = this.options.reconnectBaseMs ?? RECONNECT_BASE_MS
+    const max = this.options.reconnectMaxMs ?? RECONNECT_MAX_MS
+    const delay = Math.min(base * 2 ** this.reconnectAttempt, max)
     this.reconnectAttempt += 1
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = undefined
