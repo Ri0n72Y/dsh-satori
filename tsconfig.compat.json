@@ -4,7 +4,16 @@
     "strict": true,
     "skipLibCheck": false,
     "noEmit": true,
-    "types": ["node"]
+    "types": ["node"],
+    "baseUrl": ".",
+    "paths": {
+      "@deepseek-ai/cordis": [".dsh-source/vendor/cordis/src/index.ts"],
+      "@deepseek-ai/dsh-agent": [".dsh-source/packages/core/agent/src/index.ts"],
+      "@deepseek-ai/dsh-llm": [".dsh-source/packages/llm/llm/src/index.ts"],
+      "@deepseek-ai/dsh-session": [".dsh-source/packages/core/session/src/index.ts"],
+      "@deepseek-ai/dsh-session-persistence": [".dsh-source/packages/session/session-persistence/src/index.ts"],
+      "@deepseek-ai/schemastery": [".dsh-source/vendor/schemastery/src/index.ts"]
+    }
   },
   "include": ["src"]
 }
