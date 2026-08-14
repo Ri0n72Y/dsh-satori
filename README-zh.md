@@ -23,7 +23,7 @@ flowchart LR
 - Node.js 22.19 或更高版本。
 - 一个正在运行的 Satori Server，并至少配置一个 IM adapter。
 
-当前 CI 的 DSH API 兼容基线固定为 DeepSeek Harness `47f943859bef60e4160492346772ded9b24f765a`（仓库版本 `0.1.0-rc.5`）。兼容 job 会使用 DSH 自己的 `build:lib:host` 构建公开声明，再对本插件执行严格 TypeScript 检查。
+当前 CI 的 DSH API 兼容基线固定为 DeepSeek Harness `47f943859bef60e4160492346772ded9b24f765a`（仓库版本 `0.1.0-rc.5`）。兼容 job 会使用 DSH 自己的 `build:lib:host` 构建公开声明，再对本插件执行严格 TypeScript 检查。这一层保护的是编译期集成边界；发布前仍需要完成一次真实 DSH + Satori 的运行时往返 E2E。
 
 ## 构建
 
