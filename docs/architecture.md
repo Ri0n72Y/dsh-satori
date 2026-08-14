@@ -26,7 +26,7 @@ C4Container
 
     Container_Boundary(plugin, "dsh-satori Cordis plugin") {
         Container(client, "SatoriClient", "TypeScript", "IDENTIFY/READY, event cursor, heartbeat, reconnect, message.create")
-        Container(parser, "Satori element parser", "@satorijs/element", "Extracts text nodes from Satori content")
+        Container(codec, "Satori element codec", "@satorijs/element", "Extracts inbound text and safely serializes outbound plain text")
         Container(admission, "Admission", "TypeScript", "Canonical user/channel/login allowlists")
         Container(router, "SessionRouter", "TypeScript", "Bounded identity mapping and serialized capacity ownership")
         Container(tracker, "ReplyTracker", "TypeScript", "Correlates DSH messageId to turn and terminal reason")
@@ -40,8 +40,8 @@ C4Container
 
     Rel(satori, client, "snake_case payloads")
     Rel(client, satori, "message.create")
-    Rel(client, parser, "message.content")
-    Rel(parser, admission, "plain text + identity")
+    Rel(client, codec, "message.content / final plain text")
+    Rel(codec, admission, "inbound plain text + identity")
     Rel(admission, bridge, "admitted message")
     Rel(bridge, router, "withAgent(identity, followup)")
     Rel(router, agents, "get / resume / create / dispose")
