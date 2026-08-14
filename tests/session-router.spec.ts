@@ -10,7 +10,11 @@ function identity(userId: string) {
   return { platform: 'telegram', selfId: 'bot', channelId: 'room', userId }
 }
 
-function harness(options: { failDispose?: () => boolean; delayedCreate?: boolean } = {}) {
+function harness(options: {
+  failDispose?: boolean
+  detachOnDisposeFailure?: boolean
+  delayedCreate?: boolean
+} = {}) {
   const live = new Map<string, FakeAgent>()
   let createCount = 0
   let disposeCount = 0
@@ -30,14 +34,18 @@ function harness(options: { failDispose?: () => boolean; delayedCreate?: boolean
       const agent: FakeAgent = { id: sessionId, status: 'idle' }
       live.set(sessionId, agent)
       maxObserved = Math.max(maxObserved, live.size)
-      return {
-        agent,
-        async dispose() {
-          disposeCount += 1
-          if (options.failDispose?.()) throw new Error('dispose failed')
-          live.delete(sessionId)
-        },
-      }
+
+      let disposing: Promise<void> | undefined
+      const dispose = () => disposing ??= (async () => {
+        disposeCount += 1
+        if (options.failDispose) {
+          if (options.detachOnDisposeFailure) live.delete(sessionId)
+          throw new Error('dispose failed')
+        }
+        live.delete(sessionId)
+      })()
+
+      return { agent, dispose }
     },
     async resume({ resumeSessionId }: { resumeSessionId: string }) {
       return this.create({ sessionId: resumeSessionId })
@@ -75,20 +83,29 @@ describe('SessionRouter', () => {
     await router.dispose()
   })
 
-  it('does not release ownership when AgentHandle.dispose rejects and can retry the memoized teardown', async () => {
-    let fail = true
-    const { router, stats } = harness({ failDispose: () => fail })
+  it('surfaces a memoized teardown rejection but releases capacity after DSH detached the agent', async () => {
+    const { router, stats } = harness({ failDispose: true, detachOnDisposeFailure: true })
+    let firstAgent: unknown
+    await router.withAgent(identity('one'), (agent) => { firstAgent = agent })
+
+    await expect(router.withAgent(identity('two'), () => undefined)).rejects.toThrow('dispose failed')
+    expect(router.owns(firstAgent as never)).toBe(false)
+    expect(stats()).toMatchObject({ createCount: 1, disposeCount: 1, maxObserved: 1 })
+  })
+
+  it('keeps a still-live agent poisoned after memoized teardown failure and never retries its disposer', async () => {
+    const { router, stats } = harness({ failDispose: true, detachOnDisposeFailure: false })
     let firstAgent: unknown
     await router.withAgent(identity('one'), (agent) => { firstAgent = agent })
 
     await expect(router.withAgent(identity('two'), () => undefined)).rejects.toThrow('dispose failed')
     expect(router.owns(firstAgent as never)).toBe(true)
-    expect(stats().createCount).toBe(1)
+    expect(stats()).toMatchObject({ createCount: 1, disposeCount: 1 })
 
-    fail = false
-    await router.withAgent(identity('two'), () => undefined)
-    expect(stats()).toMatchObject({ createCount: 2, maxObserved: 1 })
-    await router.dispose()
+    await expect(router.withAgent(identity('two'), () => undefined)).rejects.toThrow('previously failed teardown')
+    expect(stats().disposeCount).toBe(1)
+    await expect(router.dispose()).rejects.toThrow('failed to dispose 1 owned agent')
+    expect(stats().disposeCount).toBe(1)
   })
 
   it('disposes a handle created after router teardown begins', async () => {
