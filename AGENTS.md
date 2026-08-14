@@ -37,13 +37,15 @@ pnpm test
 pnpm build
 ```
 
-Keep tests close to behavior. Changes to the Satori wire boundary need raw snake_case fixtures. Changes to message parsing need Satori element fixtures. Changes to admission, session identity, reply settlement, reconnect state, capacity, or lifecycle cleanup need regression tests.
+Keep tests close to behavior. Changes to the Satori wire boundary need raw snake_case fixtures. Changes to message parsing need Satori element fixtures. Changes to admission, session identity, reply settlement, reconnect state, capacity, workspace metadata, or lifecycle cleanup need regression tests.
 
 A reply may be sent to IM only after the originating DSH user message is correlated through `agent/inbox/claimed` to an exact turn. Terminal turn reason is part of reply settlement; do not expose stale intermediate assistant text from failed or cancelled turns.
 
-The standalone package build uses `tsdown` without DSH type checking because DSH currently has unpublished internal package dependencies. When a change depends on DSH API details, verify it against a current DSH source checkout.
+The normal package job remains standalone. The `dsh-compat` CI job checks out the pinned DeepSeek Harness source SHA, builds DSH host declarations with DSH's own build configuration, and strict-typechecks this plugin against those public declaration boundaries. When a change depends on DSH API details, update or confirm that baseline deliberately; do not replace the pinned SHA with an unreviewed moving target.
 
-Before opening or updating a PR, run the affected tests and record the tested head SHA and result in the PR description.
+An omitted plugin `cwd` must stay omitted from fresh DSH session metadata. Only an explicitly configured workspace may be resolved to an absolute path and passed as `meta.cwd`.
+
+Before opening or updating a PR, run the affected tests and record the tested plugin head SHA, DSH compatibility SHA, and result in the PR description.
 
 ## MVP
 
