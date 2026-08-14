@@ -1,5 +1,6 @@
 node_modules/
 lib/
 coverage/
+.dsh-source/
 .DS_Store
 *.log
