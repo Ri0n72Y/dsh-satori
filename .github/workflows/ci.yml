@@ -21,38 +21,29 @@ jobs:
   dsh-compat:
     runs-on: ubuntu-latest
     env:
-      DSH_VERSION: 0.1.0-rc.5
       DSH_RELEASE_SHA: 47f943859bef60e4160492346772ded9b24f765a
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22.19.0
-      - name: Install plugin dependencies without lifecycle scripts
-        run: npm install --ignore-scripts --no-package-lock
-      - name: Install the published DSH compatibility baseline
-        run: >-
-          npm install --save-dev --ignore-scripts --no-package-lock
-          @deepseek-ai/cordis@4.0.1
-          @deepseek-ai/dsh-agent@${DSH_VERSION}
-          @deepseek-ai/dsh-llm@${DSH_VERSION}
-          @deepseek-ai/dsh-session@${DSH_VERSION}
-          @deepseek-ai/dsh-session-persistence@${DSH_VERSION}
-          @deepseek-ai/schemastery@3.18.1
-      - name: Verify installed DSH package versions
-        run: >-
-          npm ls
-          @deepseek-ai/cordis
-          @deepseek-ai/dsh-agent
-          @deepseek-ai/dsh-llm
-          @deepseek-ai/dsh-session
-          @deepseek-ai/dsh-session-persistence
-          @deepseek-ai/schemastery
-      - name: Typecheck plugin against DSH public APIs
-        run: npx tsc -p tsconfig.compat.json --noEmit
-      - name: Build with DSH public packages present
-        run: npm run build
-      - name: Import built plugin with DSH public packages present
-        run: node --input-type=module -e "await import('./lib/index.js')"
+      - run: corepack enable
+      - name: Install plugin dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Checkout pinned DeepSeek Harness source
+        uses: actions/checkout@v4
+        with:
+          repository: deepseek-ai/deepseek-harness
+          ref: 47f943859bef60e4160492346772ded9b24f765a
+          path: .dsh-source
+          persist-credentials: false
+      - name: Verify DSH source baseline
+        run: test "$(git -C .dsh-source rev-parse HEAD)" = "${DSH_RELEASE_SHA}"
+      - name: Install DSH workspace dependencies for source type resolution
+        run: pnpm --dir .dsh-source install --frozen-lockfile --ignore-scripts
+      - name: Typecheck plugin against pinned DSH source APIs
+        run: pnpm exec tsc -p tsconfig.compat.json --noEmit
+      - name: Build after DSH compatibility typecheck
+        run: pnpm build
       - name: Record compatibility baseline
-        run: echo "DSH ${DSH_VERSION} release source ${DSH_RELEASE_SHA}"
+        run: echo "DSH source ${DSH_RELEASE_SHA}; Node $(node --version)"
