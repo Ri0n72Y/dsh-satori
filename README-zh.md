@@ -107,6 +107,8 @@ SATORI_UNSAFE_ALLOW_ALL=1
 
 Satori wire 上的 `message.content` 是元素序列化字符串。插件使用 Satori 官方 `@satorijs/element` parser 解析它，只把 text 节点送入 DSH；图片、mention、quote 等非文本元素暂不进入模型。没有文本的消息会被忽略。
 
+DSH 返回的普通文本也通过同一个 Satori element 库序列化成 text 内容后再发送，因此 `<at/>`、`<img/>` 等模型输出会作为普通文本显示，不会被 Satori 解释成消息元素。
+
 ## Session 映射
 
 每个 Satori 登录、频道和发送者都会得到稳定的 DSH session。SessionId 使用这些原始字段计算 SHA-256 派生键，并保留短的平台标签：
@@ -136,6 +138,7 @@ sequenceDiagram
     D-->>P: inbox/claimed(messageId, turn)
     D-->>P: assistant/message(turn)
     D-->>P: turn/end(turn, reason)
+    P->>P: final text -> Satori text serialization
     P->>S: completed/max-tokens 才 message.create
     S-->>IM: 文本回复
 ```
