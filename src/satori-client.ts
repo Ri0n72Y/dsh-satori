@@ -1,8 +1,9 @@
-import { SatoriOpcode, type SatoriEvent, type SatoriServerPayload } from './satori-protocol.js'
+import { decodeSatoriServerPayload, SatoriOpcode, type SatoriEvent } from './satori-protocol.js'
 
 export interface SatoriClientOptions {
   baseUrl: string
   token?: string
+  onError?: (error: unknown) => void
 }
 
 export interface SatoriTarget {
@@ -24,6 +25,7 @@ export class SatoriClient {
   private reconnectAttempt = 0
   private stopped = true
   private readonly handlers = new Set<EventHandler>()
+  private readonly pending = new Set<Promise<void>>()
 
   constructor(private readonly options: SatoriClientOptions) {}
 
@@ -38,12 +40,14 @@ export class SatoriClient {
     this.connect()
   }
 
-  stop(): void {
+  async stop(): Promise<void> {
     if (this.stopped) return
     this.stopped = true
     this.clearTimers()
-    this.socket?.close(1000, 'dsh-satori stopped')
+    const socket = this.socket
     this.socket = undefined
+    socket?.close(1000, 'dsh-satori stopped')
+    await Promise.allSettled([...this.pending])
   }
 
   async sendMessage(target: SatoriTarget, content: string): Promise<void> {
@@ -70,7 +74,14 @@ export class SatoriClient {
   private connect(): void {
     if (this.stopped) return
 
-    const socket = new WebSocket(this.eventsUrl())
+    let socket: WebSocket
+    try {
+      socket = new WebSocket(this.eventsUrl())
+    } catch (error) {
+      this.report(error)
+      this.scheduleReconnect()
+      return
+    }
     this.socket = socket
 
     socket.addEventListener('open', () => {
@@ -105,22 +116,20 @@ export class SatoriClient {
   }
 
   private handlePayload(data: unknown): void {
-    let payload: SatoriServerPayload
-    try {
-      payload = JSON.parse(String(data)) as SatoriServerPayload
-    } catch {
-      return
-    }
-
-    if (payload.op !== SatoriOpcode.EVENT) return
+    const payload = decodeSatoriServerPayload(data)
+    if (!payload || payload.op !== SatoriOpcode.EVENT) return
 
     const event = payload.body
     this.sequence = event.sn
-    for (const handler of this.handlers) {
-      Promise.resolve(handler(event)).catch((error) => {
-        console.error('[dsh-satori] event handler failed', error)
-      })
-    }
+    for (const handler of this.handlers) this.runHandler(handler, event)
+  }
+
+  private runHandler(handler: EventHandler, event: SatoriEvent): void {
+    const pending = Promise.resolve().then(() => handler(event))
+    this.pending.add(pending)
+    void pending.catch(error => this.report(error)).finally(() => {
+      this.pending.delete(pending)
+    })
   }
 
   private startPing(socket: WebSocket): void {
@@ -154,6 +163,10 @@ export class SatoriClient {
     this.reconnectTimer = undefined
   }
 
+  private report(error: unknown): void {
+    this.options.onError?.(error)
+  }
+
   private authHeaders(): Record<string, string> {
     return this.options.token
       ? { authorization: `Bearer ${this.options.token}` }
@@ -161,8 +174,7 @@ export class SatoriClient {
   }
 
   private endpoint(path: string): string {
-    const base = this.normalizedBaseUrl()
-    return new URL(path, base).toString()
+    return new URL(path, this.normalizedBaseUrl()).toString()
   }
 
   private eventsUrl(): string {

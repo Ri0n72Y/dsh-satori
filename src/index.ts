@@ -1,16 +1,18 @@
 import type { Context } from '@deepseek-ai/cordis'
 import '@deepseek-ai/dsh-agent'
+import '@deepseek-ai/dsh-session-persistence'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
-import type { SessionId } from '@deepseek-ai/dsh-session'
 import Schema from '@deepseek-ai/schemastery'
+import { resolve } from 'node:path'
 
+import { inboundMessage, type AdmissionPolicy } from './inbound.js'
 import { assistantText } from './message.js'
-import { SatoriClient, type SatoriTarget } from './satori-client.js'
-import type { SatoriEvent } from './satori-protocol.js'
+import { ReplyTracker } from './reply-tracker.js'
+import { SatoriClient } from './satori-client.js'
 import { SessionRouter } from './session-router.js'
 
 export const name = 'dsh-satori'
-export const inject = ['agents', 'sessions']
+export const inject = ['agents', 'sessionPersistence']
 
 export interface Config {
   baseUrl: string
@@ -19,6 +21,12 @@ export interface Config {
   cwd?: string
   provider?: string
   model?: string
+  allowedUsers: string[]
+  allowedChannels: string[]
+  allowedLogins: string[]
+  unsafeAllowAll: boolean
+  maxLiveAgents: number
+  idleTtlMs: number
 }
 
 export const Config: Schema<Config> = Schema.object({
@@ -32,17 +40,36 @@ export const Config: Schema<Config> = Schema.object({
   cwd: Schema.string().description('Working directory for newly created DSH sessions'),
   provider: Schema.string().description('Optional DSH model provider override'),
   model: Schema.string().description('Optional DSH model override'),
+  allowedUsers: Schema.array(String)
+    .description('Allowed Satori users as <platform>:<userId>')
+    .default([]),
+  allowedChannels: Schema.array(String)
+    .description('Allowed Satori channels as <platform>:<channelId>')
+    .default([]),
+  allowedLogins: Schema.array(String)
+    .description('Optional Satori bot login filter as <platform>:<selfId>')
+    .default([]),
+  unsafeAllowAll: Schema.boolean()
+    .description('Accept every non-bot Satori sender. Intended only for trusted test environments.')
+    .default(false),
+  maxLiveAgents: Schema.number()
+    .description('Maximum number of live DSH agents owned by this plugin')
+    .min(1)
+    .step(1)
+    .default(32),
+  idleTtlMs: Schema.number()
+    .description('Idle owned agents older than this are disposed when capacity is checked')
+    .min(1000)
+    .step(1)
+    .default(900_000),
 })
 
-interface TurnBuffer {
-  target: SatoriTarget
-  text?: string
-}
-
 export function apply(ctx: Context, config: Config): void {
+  const logger = ctx.logger
   const client = new SatoriClient({
     baseUrl: config.baseUrl,
     token: config.token,
+    onError: error => logger.warn(`dsh-satori: ${String(error)}`),
   })
 
   const agentOptions = config.provider || config.model
@@ -54,81 +81,81 @@ export function apply(ctx: Context, config: Config): void {
 
   const router = new SessionRouter(ctx, {
     prefix: config.sessionPrefix,
-    cwd: config.cwd ?? process.cwd(),
+    cwd: resolve(config.cwd ?? process.cwd()),
     agentOptions,
+    maxLiveAgents: config.maxLiveAgents,
+    idleTtlMs: config.idleTtlMs,
   })
-
-  const targetBySession = new Map<SessionId, SatoriTarget>()
-  const turns = new Map<string, TurnBuffer>()
+  const replies = new ReplyTracker()
+  const admission: AdmissionPolicy = {
+    allowedUsers: config.allowedUsers,
+    allowedChannels: config.allowedChannels,
+    allowedLogins: config.allowedLogins,
+    unsafeAllowAll: config.unsafeAllowAll,
+  }
+  let closed = false
 
   const disposeEventHandler = client.onEvent(async (event) => {
-    const inbound = inboundMessage(event)
+    const inbound = inboundMessage(event, admission)
     if (!inbound) return
 
-    const agent = await router.get(inbound.target)
-    targetBySession.set(agent.id, inbound.target)
-    agent.followup(createUserMessage({
+    const agent = await router.get(inbound.identity)
+    if (closed) return
+
+    const message = createUserMessage({
       source: { kind: 'user' },
       content: [{ type: 'text', text: inbound.text }],
-    }))
+    })
+    replies.queue(agent, message.id, inbound.target)
+    try {
+      agent.followup(message)
+    } catch (error) {
+      replies.discard(agent, message.id)
+      throw error
+    }
+  })
+
+  ctx.on('agent/inbox/claimed', ({ agent, message, turn }) => {
+    replies.claim(agent, message.id, turn)
+  })
+
+  ctx.on('agent/inbox/discarded', ({ agent, message }) => {
+    replies.discard(agent, message.id)
+  })
+
+  ctx.on('agent/disposed', ({ agent }) => {
+    replies.dropAgent(agent)
   })
 
   ctx.on('session/event', (session, event) => {
     if (event.type === 'assistant/message') {
       const text = assistantText(event.data.message)
-      if (!text) return
-      const target = targetBySession.get(session.id)
-      if (!target) return
-      turns.set(turnKey(session.id, event.data.turn), { target, text })
+      if (text) replies.assistant(session.id, event.data.turn, text)
       return
     }
 
     if (event.type !== 'turn/end') return
+    const reply = replies.end(session.id, event.data.turn)
+    if (!reply) return
 
-    const key = turnKey(session.id, event.data.turn)
-    const buffered = turns.get(key)
-    turns.delete(key)
-    if (!buffered?.text) return
-
-    client.sendMessage(buffered.target, buffered.text).catch((error) => {
-      console.error('[dsh-satori] failed to send assistant reply', error)
+    void client.sendMessage(reply.target, reply.text).catch((error) => {
+      logger.warn(`dsh-satori: failed to send assistant reply: ${String(error)}`)
     })
   })
 
   ctx.effect(() => {
     client.start()
     return async () => {
+      closed = true
       disposeEventHandler()
-      client.stop()
-      turns.clear()
-      targetBySession.clear()
+      await client.stop()
+      replies.clear()
       await router.dispose()
     }
   })
 }
 
-function inboundMessage(event: SatoriEvent): { target: SatoriTarget; text: string } | undefined {
-  if (event.type !== 'message-created') return
-
-  const channelId = event.channel?.id ?? event.message?.channel?.id
-  const selfId = event.selfId
-  const platform = event.platform
-  const userId = event.user?.id ?? event.message?.user?.id
-  const selfUserId = event.login.user?.id
-  const text = event.message?.content?.trim()
-
-  if (!channelId || !selfId || !platform || !text) return
-  if (selfUserId && userId === selfUserId) return
-
-  return {
-    target: { platform, selfId, channelId },
-    text,
-  }
-}
-
-function turnKey(sessionId: SessionId, turn: number): string {
-  return `${sessionId}:${turn}`
-}
-
+export { inboundMessage, peerKey } from './inbound.js'
+export { ReplyTracker } from './reply-tracker.js'
 export { SatoriClient } from './satori-client.js'
 export { SessionRouter, sessionIdFor } from './session-router.js'

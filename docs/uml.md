@@ -5,9 +5,10 @@ classDiagram
     class SatoriClient {
         -WebSocket socket
         -number sequence
+        -Set pending
         +onEvent(handler) disposer
         +start() void
-        +stop() void
+        +stop() Promise
         +sendMessage(target, content) Promise
     }
 
@@ -16,6 +17,24 @@ classDiagram
         -Map opening
         +get(identity) Promise~Agent~
         +dispose() Promise
+        -ensureCapacity() Promise
+    }
+
+    class ReplyTracker {
+        -Map pending
+        -Map turns
+        +queue(agent, messageId, target) void
+        +claim(agent, messageId, turn) void
+        +assistant(sessionId, turn, text) void
+        +end(sessionId, turn) CompletedReply
+        +dropAgent(agent) void
+    }
+
+    class AdmissionPolicy {
+        +string[] allowedUsers
+        +string[] allowedChannels
+        +string[] allowedLogins
+        +boolean unsafeAllowAll
     }
 
     class SatoriTarget {
@@ -24,19 +43,22 @@ classDiagram
         +string channelId
     }
 
+    class SessionIdentity {
+        +string platform
+        +string selfId
+        +string channelId
+        +string userId
+    }
+
     class Agent {
         +SessionId id
         +followup(message) void
+        +status status
     }
 
-    class Context {
-        +AgentRegistry agents
-        +on(session/event) disposer
-        +effect(effect) disposer
-    }
-
-    SatoriClient --> SatoriTarget : sends to
-    SessionRouter --> Agent : opens or reuses
-    Context --> SessionRouter : provides agents
-    Context --> Agent : observes session events
+    SatoriClient --> AdmissionPolicy : emits normalized events to bridge
+    SessionRouter --> SessionIdentity : maps
+    SessionRouter --> Agent : owns bounded handles
+    ReplyTracker --> SatoriTarget : releases correlated replies
+    ReplyTracker --> Agent : correlates inbox claims
 ```

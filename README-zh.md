@@ -2,9 +2,9 @@
 
 [中文](README-zh.md) | [English](README.md)
 
-`dsh-satori` 是一个连接 DeepSeek Harness 与 Satori 的轻量插件。Satori 负责接入 Telegram、Discord、飞书等 IM 平台，插件负责把 Satori 会话映射到 DSH session，并把 DSH 的回复发回原会话。
+`dsh-satori` 是一个连接 DeepSeek Harness 与 Satori 的轻量插件。Satori 负责接入 Telegram、Discord、飞书等 IM 平台，插件负责把经过准入检查的消息映射到 DSH session，并把对应 turn 的最终回复发回原会话。
 
-当前 MVP 只处理文本消息。相同的 Satori 登录身份与频道会映射到稳定的 DSH session，因此插件重连后可以继续原来的会话。
+当前 MVP 只处理文本消息。它直接使用 Satori 的 `/v1/events` WebSocket 与 `/v1/message.create` API，不在插件里重复实现各个平台协议。
 
 ## 架构
 
@@ -49,37 +49,35 @@ pnpm build
 dsh plugin --profile web add /absolute/path/to/dsh-satori
 ```
 
-安装后先检查最终配置，再启动 DSH：
-
-```sh
-dsh --profile web --dump-config
-dsh --profile web
-```
-
 ### 从 GitHub 安装
 
 ```sh
 dsh plugin --profile web add github:Ri0n72Y/dsh-satori
 ```
 
-Git 安装会通过 `prepare` 编译 TypeScript。pnpm 在执行依赖构建脚本前可能要求显式授权。如果第一次安装被阻止，在 `$DSH_HOME/profiles/web/pnpm-workspace.yaml` 中加入：
+Git 安装会通过 `prepare` 编译 TypeScript。pnpm 如果阻止构建脚本，在 `$DSH_HOME/profiles/web/pnpm-workspace.yaml` 中加入：
 
 ```yaml
 allowBuilds:
   dsh-satori: true
 ```
 
-然后重新执行安装命令。
-
-需要固定版本时，可以直接固定 commit：
+需要固定版本时可以安装具体 commit：
 
 ```sh
 dsh plugin --profile web add github:Ri0n72Y/dsh-satori#<commit-sha>
 ```
 
+安装后检查最终配置并启动 DSH：
+
+```sh
+dsh --profile web --dump-config
+dsh --profile web
+```
+
 ## 配置 Satori
 
-插件自带的 Cordis patch 会读取以下环境变量：
+基础连接：
 
 ```sh
 SATORI_BASE_URL=http://127.0.0.1:5140/satori
@@ -88,7 +86,43 @@ SATORI_TOKEN=your-token
 
 如果 Satori Server 不要求认证，可以不设置 `SATORI_TOKEN`。
 
-也可以直接修改 profile 中的 `cordis.patch.yml`：
+### 准入控制
+
+插件默认不接受任何外部发送者。至少配置允许的用户或频道：
+
+```sh
+SATORI_ALLOWED_USERS=telegram:123456
+```
+
+或者：
+
+```sh
+SATORI_ALLOWED_CHANNELS=discord:987654321
+```
+
+多个值使用逗号分隔：
+
+```sh
+SATORI_ALLOWED_USERS=telegram:123456,lark:ou_xxx
+```
+
+还可以限制允许驱动 DSH 的 Satori 登录身份：
+
+```sh
+SATORI_ALLOWED_LOGINS=telegram:my_bot_id
+```
+
+这些值使用 `<platform>:<id>`。平台名和 ID 在内部会分别进行 URI 编码。
+
+仅在可信测试环境中，可以临时关闭准入限制：
+
+```sh
+SATORI_UNSAFE_ALLOW_ALL=1
+```
+
+机器人自身消息和 Satori 标记为 bot 的发送者仍会被忽略。
+
+也可以直接在 profile 中配置插件：
 
 ```yaml
 - id: satori
@@ -96,22 +130,30 @@ SATORI_TOKEN=your-token
   config:
     baseUrl: http://127.0.0.1:5140/satori
     token: your-token
+    allowedUsers:
+      - telegram:123456
+    allowedChannels: []
+    allowedLogins: []
     sessionPrefix: satori
+    maxLiveAgents: 32
+    idleTtlMs: 900000
 ```
 
 `provider` 和 `model` 是可选项。不填写时，插件使用 DSH 当前组合提供的模型路由。
 
 ## Session 映射
 
-Satori 会话会映射为：
+当前 MVP 为每个发送者在每个频道建立独立 session：
 
 ```text
-<sessionPrefix>:<platform>:<selfId>:<channelId>
+<sessionPrefix>:<platform>:<selfId>:<channelId>:<userId>
 ```
 
-收到消息后，插件会先查找同 ID 的在线 Agent；没有则尝试恢复持久化 session；仍无法恢复时再创建新的 session。
+这样群聊中的不同用户不会共享 DSH 历史。收到消息后，插件先查找在线 Agent；如果没有，则检查 session persistence，存在时 resume，不存在时 create。
 
-## 当前消息路径
+插件默认最多持有 32 个自己创建的 live Agent。达到上限时优先释放空闲最久的 Agent；超过 `idleTtlMs` 的空闲 Agent 会在容量检查时回收。持久化 session 后续仍可恢复。
+
+## 消息路径
 
 ```mermaid
 sequenceDiagram
@@ -121,16 +163,25 @@ sequenceDiagram
     participant D as DSH Agent
 
     IM->>S: 文本消息
-    S->>P: message-created
+    S->>P: snake_case message-created
+    P->>P: 归一化 + 准入检查
     P->>D: followup(user message)
-    D-->>P: assistant/message
+    D-->>P: inbox/claimed(messageId, turn)
+    D-->>P: assistant/message(turn)
+    D-->>P: turn/end(turn)
     P->>S: message.create
     S-->>IM: 文本回复
 ```
 
+插件只会发送与该 Satori 输入精确关联的 DSH turn。其他入口驱动同一 session 产生的回复不会被转发到 IM。
+
+## 协议兼容
+
+插件针对 Satori v1 HTTP/WebSocket 接口工作。当前 Satori Server 在 wire 上发送 snake_case 字段，插件会在 `SatoriClient` 边界统一转为 camelCase 后再进入业务逻辑。
+
 ## 开发
 
-修改前先阅读 [`AGENTS.md`](AGENTS.md)。如果代码改变组件关系、依赖、消息流、session identity、生命周期、认证、重试或 ownership，需要在同一个 PR 中更新对应 Mermaid 图。
+修改前先阅读 [`AGENTS.md`](AGENTS.md)。如果代码改变组件关系、依赖、消息流、session identity、生命周期、认证、准入、重试或 ownership，需要在同一个 PR 中更新对应 Mermaid 图。
 
 ```sh
 pnpm test

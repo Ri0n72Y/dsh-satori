@@ -3,12 +3,13 @@ import { assistantText } from '../src/message.js'
 import { sessionKeyFor } from '../src/session-id.js'
 
 describe('sessionKeyFor', () => {
-  it('keeps one stable DSH session per Satori login and channel', () => {
+  it('keeps one stable DSH session per Satori login, channel, and sender', () => {
     expect(sessionKeyFor({
       platform: 'telegram',
       selfId: 'bot:1',
       channelId: 'room/42',
-    })).toBe('satori:telegram:bot%3A1:room%2F42')
+      userId: 'user:7',
+    })).toBe('satori:telegram:bot%3A1:room%2F42:user%3A7')
   })
 })
 

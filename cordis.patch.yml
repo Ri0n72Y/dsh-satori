@@ -4,3 +4,7 @@
       config:
         baseUrl: !!js process.env.SATORI_BASE_URL ?? 'http://127.0.0.1:5140/satori'
         token: !!js process.env.SATORI_TOKEN
+        allowedUsers: !!js (process.env.SATORI_ALLOWED_USERS ?? '').split(',').filter(Boolean)
+        allowedChannels: !!js (process.env.SATORI_ALLOWED_CHANNELS ?? '').split(',').filter(Boolean)
+        allowedLogins: !!js (process.env.SATORI_ALLOWED_LOGINS ?? '').split(',').filter(Boolean)
+        unsafeAllowAll: !!js process.env.SATORI_UNSAFE_ALLOW_ALL === '1'

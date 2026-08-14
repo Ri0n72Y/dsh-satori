@@ -16,3 +16,4 @@ jobs:
       - run: pnpm install --no-frozen-lockfile
       - run: pnpm test
       - run: pnpm build
+      - run: mkdir -p /tmp/dsh-satori-pack && pnpm pack --pack-destination /tmp/dsh-satori-pack
