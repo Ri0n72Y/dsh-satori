@@ -4,9 +4,6 @@ on:
   push:
   pull_request:
 
-permissions:
-  contents: write
-
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -16,18 +13,7 @@ jobs:
         with:
           node-version: 22.19.0
       - run: corepack enable
-      - run: pnpm install --no-frozen-lockfile
+      - run: pnpm install --frozen-lockfile
       - run: pnpm test
       - run: pnpm build
       - run: mkdir -p /tmp/dsh-satori-pack && pnpm pack --pack-destination /tmp/dsh-satori-pack
-      - name: Refresh lockfile on repair branch
-        if: github.event_name == 'push' && github.ref_name == 'fix/static-review-2'
-        run: |
-          if git diff --quiet -- pnpm-lock.yaml; then
-            exit 0
-          fi
-          git config user.name github-actions[bot]
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add pnpm-lock.yaml
-          git commit -m "chore: refresh lockfile"
-          git push origin "HEAD:${GITHUB_REF_NAME}"
