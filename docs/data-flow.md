@@ -5,7 +5,7 @@ sequenceDiagram
     participant U as IM user
     participant S as Satori server
     participant C as SatoriClient
-    participant E as Element parser
+    participant E as Satori element codec
     participant G as Admission
     participant R as SessionRouter
     participant A as DSH Agent
@@ -29,6 +29,8 @@ sequenceDiagram
     A-->>T: turn/end(turn, reason)
     alt completed or max-tokens
         T-->>C: correlated final reply
+        C->>E: serialize as Satori text element
+        E-->>C: escaped content
         C->>S: POST v1/message.create
         S-->>U: assistant text
     else error / aborted / blocked / interrupted
