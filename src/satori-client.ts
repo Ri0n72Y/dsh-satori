@@ -1,3 +1,4 @@
+import { satoriPlainText } from './satori-message.js'
 import { decodeSatoriServerPayload, SatoriOpcode, type SatoriEvent } from './satori-protocol.js'
 
 export interface SatoriClientOptions {
@@ -103,7 +104,7 @@ export class SatoriClient {
       },
       body: JSON.stringify({
         channel_id: target.channelId,
-        content,
+        content: satoriPlainText(content),
       }),
       signal,
     })
