@@ -14,6 +14,11 @@ classDiagram
         +sendMessage(target, content) Promise
     }
 
+    class SatoriElementCodec {
+        +plainTextFromSatori(content) string
+        +satoriPlainText(content) string
+    }
+
     class SessionRouter {
         -Map owned
         -Promise gate
@@ -23,6 +28,12 @@ classDiagram
         +dispose() Promise
         -ensureCapacity() Promise
         -disposeOwned(sessionId, entry) Promise
+    }
+
+    class OwnedAgent {
+        +AgentHandle handle
+        +number lastUsedAt
+        +unknown disposeError
     }
 
     class ReplyTracker {
@@ -56,8 +67,10 @@ classDiagram
         +Inbox inbox
     }
 
+    SatoriClient --> SatoriElementCodec : decodes inbound / encodes outbound
     SatoriClient --> AdmissionPolicy : emits normalized events
     SessionRouter --> SessionIdentity : hashes to bounded SessionId
-    SessionRouter --> Agent : owns handles under capacity gate
+    SessionRouter --> OwnedAgent : owns
+    OwnedAgent --> Agent : handle.agent
     ReplyTracker --> Agent : correlates inbox claims and failures
 ```
