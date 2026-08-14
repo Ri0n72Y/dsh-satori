@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.prepare.json",
+  "compilerOptions": {
+    "strict": true,
+    "skipLibCheck": false,
+    "noEmit": true
+  },
+  "include": ["src"]
+}
