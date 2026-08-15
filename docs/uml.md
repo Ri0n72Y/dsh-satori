@@ -14,14 +14,23 @@ classDiagram
         +sendMessage(target, content) Promise
     }
 
+    class SatoriTarget {
+        +string platform
+        +string selfId
+        +string channelId
+        +string replyToMessageId
+    }
+
     class SatoriElementCodec {
         +plainTextFromSatori(content) string
         +satoriPlainText(content) string
+        +satoriReplyText(content, replyToMessageId) string
     }
 
     class SessionRouter {
         -Map owned
         -Promise gate
+        -AbortController abortController
         -boolean closed
         +withAgent(identity, use) Promise
         +owns(agent) boolean
@@ -67,10 +76,12 @@ classDiagram
         +Inbox inbox
     }
 
-    SatoriClient --> SatoriElementCodec : decodes inbound / encodes outbound
+    SatoriClient --> SatoriTarget : routes reply
+    SatoriClient --> SatoriElementCodec : decodes inbound / encodes text + quote
     SatoriClient --> AdmissionPolicy : emits normalized events
     SessionRouter --> SessionIdentity : hashes to bounded SessionId
     SessionRouter --> OwnedAgent : owns
     OwnedAgent --> Agent : handle.agent
+    ReplyTracker --> SatoriTarget : preserves source reply identity
     ReplyTracker --> Agent : correlates inbox claims and failures
 ```

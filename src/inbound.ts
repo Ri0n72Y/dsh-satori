@@ -1,6 +1,6 @@
 import type { SatoriTarget } from './satori-client.js'
 import { plainTextFromSatori } from './satori-message.js'
-import type { SatoriEvent } from './satori-protocol.js'
+import { SatoriChannelType, type SatoriEvent } from './satori-protocol.js'
 import type { SessionIdentity } from './session-id.js'
 
 export interface AdmissionConfig {
@@ -42,16 +42,19 @@ export function inboundMessage(
 ): InboundMessage | undefined {
   if (event.type !== 'message-created') return
 
-  const channelId = event.channel?.id ?? event.message?.channel?.id
+  const channel = event.channel ?? event.message?.channel
+  const channelId = channel?.id
   const selfId = event.selfId
   const platform = event.platform
   const user = event.user ?? event.message?.user
   const userId = user?.id
   const selfUserId = event.login.user?.id
   const content = event.message?.content
+  const sourceMessageId = event.message?.id
 
   if (!channelId || !selfId || !platform || !userId || !content) return
-  if (selfUserId === userId || user?.isBot === true) return
+  if (userId === selfId || selfUserId === userId || user?.isBot === true) return
+  if (channel?.type === SatoriChannelType.TEXT && !sourceMessageId) return
 
   const loginAllowed = policy.allowedLogins.size === 0
     || policy.allowedLogins.has(peerKey(platform, selfId))
@@ -66,7 +69,12 @@ export function inboundMessage(
   if (!text) return
 
   return {
-    target: { platform, selfId, channelId },
+    target: {
+      platform,
+      selfId,
+      channelId,
+      ...(channel?.type === SatoriChannelType.TEXT && sourceMessageId ? { replyToMessageId: sourceMessageId } : {}),
+    },
     identity: { platform, selfId, channelId, userId },
     text,
   }

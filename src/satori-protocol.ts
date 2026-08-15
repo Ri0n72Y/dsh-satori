@@ -7,6 +7,11 @@ export const SatoriOpcode = {
   META: 5,
 } as const
 
+export const SatoriChannelType = {
+  TEXT: 0,
+  DIRECT: 1,
+} as const
+
 export interface SatoriUser {
   id: string
   isBot?: boolean
@@ -18,6 +23,7 @@ export interface SatoriChannel {
 }
 
 export interface SatoriMessage {
+  id?: string
   content?: string
   channel?: SatoriChannel
   user?: SatoriUser

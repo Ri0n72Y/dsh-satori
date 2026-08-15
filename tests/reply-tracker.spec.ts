@@ -18,6 +18,18 @@ describe('ReplyTracker', () => {
     expect(tracker.end('session-1', 4, { kind: 'completed' })).toEqual({ target, text: 'final' })
   })
 
+  it('clears an earlier candidate when the last committed assistant message has no visible text', () => {
+    const tracker = new ReplyTracker<{ id: string }>()
+    const agent = { id: 'session-1' }
+
+    tracker.queue(agent, 'message-1', target)
+    tracker.claim(agent, 'message-1', 1)
+    tracker.assistant('session-1', 1, 'earlier text')
+    tracker.assistant('session-1', 1, '')
+
+    expect(tracker.end('session-1', 1, { kind: 'completed' })).toBeUndefined()
+  })
+
   it.each(['error', 'aborted', 'blocked', 'interrupted'])('does not send stale text for %s turns', (kind: string) => {
     const tracker = new ReplyTracker<{ id: string }>()
     const agent = { id: 'session-1' }

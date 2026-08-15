@@ -66,10 +66,13 @@ export const Config: Schema<Config> = Schema.object({
 
 export function apply(ctx: Context, config: Config): void {
   const logger = ctx.logger
+  let closed = false
   const client = new SatoriClient({
     baseUrl: config.baseUrl,
     token: config.token,
-    onError: error => logger.warn(`dsh-satori: ${String(error)}`),
+    onError: error => {
+      if (!closed) logger.warn(`dsh-satori: ${String(error)}`)
+    },
   })
 
   const agentOptions = config.provider || config.model
@@ -93,7 +96,6 @@ export function apply(ctx: Context, config: Config): void {
     allowedLogins: config.allowedLogins,
     unsafeAllowAll: config.unsafeAllowAll,
   })
-  let closed = false
 
   const disposeEventHandler = client.onEvent(async (event) => {
     if (closed) return
@@ -148,8 +150,7 @@ export function apply(ctx: Context, config: Config): void {
   ctx.on('session/event', (session, event) => {
     if (closed) return
     if (event.type === 'assistant/message') {
-      const text = assistantText(event.data.message)
-      if (text) replies.assistant(session.id, event.data.turn, text)
+      replies.assistant(session.id, event.data.turn, assistantText(event.data.message))
       return
     }
 
@@ -168,14 +169,19 @@ export function apply(ctx: Context, config: Config): void {
       closed = true
       disposeEventHandler()
       replies.clear()
-      await client.stop()
-      await router.dispose()
+      const results = await Promise.allSettled([router.dispose(), client.stop()])
+      const failures = results
+        .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
+        .map(result => result.reason)
+      if (failures.length > 0) {
+        throw new AggregateError(failures, `dsh-satori shutdown failed in ${failures.length} component(s)`)
+      }
     }
   })
 }
 
 export { compileAdmissionPolicy, inboundMessage, peerKey } from './inbound.js'
-export { plainTextFromSatori } from './satori-message.js'
+export { plainTextFromSatori, satoriReplyText } from './satori-message.js'
 export { ReplyTracker } from './reply-tracker.js'
 export { SatoriClient } from './satori-client.js'
 export { SessionRouter, sessionIdFor } from './session-router.js'

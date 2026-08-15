@@ -19,6 +19,7 @@ function harness(options: {
   failDispose?: boolean
   detachOnDisposeFailure?: boolean
   delayedCreate?: boolean
+  delayedList?: boolean
   cwd?: string | null
 } = {}) {
   const live = new Map<string, FakeAgent>()
@@ -26,6 +27,8 @@ function harness(options: {
   let createCount = 0
   let disposeCount = 0
   let maxObserved = 0
+  let listStarted = false
+  let listAborted = false
   let releaseCreate: (() => void) | undefined
   const createGate = options.delayedCreate
     ? new Promise<void>(resolve => { releaseCreate = resolve })
@@ -61,7 +64,23 @@ function harness(options: {
   }
   const ctx = {
     agents,
-    sessionPersistence: { async list() { return [] } },
+    sessionPersistence: {
+      async list(signal?: AbortSignal) {
+        listStarted = true
+        if (!options.delayedList) return []
+        return await new Promise<never[]>((resolve, reject) => {
+          if (signal?.aborted) {
+            listAborted = true
+            reject(signal.reason)
+            return
+          }
+          signal?.addEventListener('abort', () => {
+            listAborted = true
+            reject(signal.reason)
+          }, { once: true })
+        })
+      },
+    },
   }
   const router = new SessionRouter(ctx as never, {
     prefix: 'satori',
@@ -74,7 +93,7 @@ function harness(options: {
     live,
     releaseCreate: () => releaseCreate?.(),
     creates: () => [...creates],
-    stats: () => ({ createCount, disposeCount, maxObserved }),
+    stats: () => ({ createCount, disposeCount, maxObserved, listStarted, listAborted }),
   }
 }
 
@@ -132,6 +151,17 @@ describe('SessionRouter', () => {
     expect(stats().disposeCount).toBe(1)
     await expect(router.dispose()).rejects.toThrow('failed to dispose 1 owned agent')
     expect(stats().disposeCount).toBe(1)
+  })
+
+  it('aborts a persistence lookup as soon as router teardown begins', async () => {
+    const { router, stats } = harness({ delayedList: true })
+    const delivery = router.withAgent(identity('one'), () => undefined)
+    while (!stats().listStarted) await Promise.resolve()
+
+    const stopping = router.dispose()
+    await expect(delivery).rejects.toThrow('session router is disposed')
+    await stopping
+    expect(stats()).toMatchObject({ listAborted: true, createCount: 0 })
   })
 
   it('disposes a handle created after router teardown begins', async () => {

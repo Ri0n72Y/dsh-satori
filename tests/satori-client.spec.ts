@@ -128,6 +128,33 @@ describe('SatoriClient reconnect lifecycle', () => {
 })
 
 describe('SatoriClient outbound lifecycle', () => {
+  it('sends group replies with the source quote and escaped assistant text', async () => {
+    let requestBody: unknown
+    const fetchImpl = (async (_url: string | URL | Request, init?: RequestInit) => {
+      requestBody = JSON.parse(String(init?.body))
+      return new Response('{}', { status: 200 })
+    }) as typeof fetch
+    const client = new SatoriClient({
+      baseUrl: 'http://127.0.0.1:5140/satori',
+      webSocketFactory: () => new FakeSocket() as never,
+      fetchImpl,
+    })
+    client.start()
+
+    await client.sendMessage({
+      platform: 'telegram',
+      selfId: 'bot',
+      channelId: 'room',
+      replyToMessageId: 'source-1',
+    }, 'hello <at id="42"/>')
+
+    expect(requestBody).toEqual({
+      channel_id: 'room',
+      content: '<quote id="source-1"/>hello &lt;at id="42"/&gt;',
+    })
+    await client.stop()
+  })
+
   it('aborts in-flight HTTP sends during stop', async () => {
     let aborted = false
     const fetchImpl = ((_url: string | URL | Request, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {

@@ -26,6 +26,7 @@ export function sessionIdFor(identity: SessionIdentity, prefix = 'satori'): Sess
 
 export class SessionRouter {
   private readonly owned = new Map<SessionId, OwnedAgent>()
+  private readonly abortController = new AbortController()
   private gate: Promise<void> = Promise.resolve()
   private closed = false
 
@@ -52,7 +53,10 @@ export class SessionRouter {
   }
 
   async dispose(): Promise<void> {
-    this.closed = true
+    if (!this.closed) {
+      this.closed = true
+      this.abortController.abort(new Error('dsh-satori session router is disposed'))
+    }
     await this.exclusive(async () => {
       const failures: unknown[] = []
       for (const [sessionId, entry] of [...this.owned]) {
@@ -84,7 +88,7 @@ export class SessionRouter {
     if (owned) await this.disposeOwned(sessionId, owned)
     await this.ensureCapacity()
 
-    const persisted = (await this.ctx.sessionPersistence.list())
+    const persisted = (await this.ctx.sessionPersistence.list(this.abortController.signal))
       .some(header => header.id === sessionId)
     const handle = persisted
       ? await this.ctx.agents.resume({

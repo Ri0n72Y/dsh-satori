@@ -20,7 +20,7 @@ flowchart LR
 ## 环境要求
 
 - DeepSeek Harness，已配置 agent loop 与 session persistence。
-- Node.js 22.19 或更高版本。
+- Node.js `^22.19.0 || >=24.0.0`。
 - 一个正在运行的 Satori Server，并至少配置一个 IM adapter。
 
 当前 CI 的 DSH API 兼容基线固定为 DeepSeek Harness `47f943859bef60e4160492346772ded9b24f765a`（仓库版本 `0.1.0-rc.5`）。兼容 job 会使用 DSH 自己的 `build:lib:host` 构建公开声明，再对本插件执行严格 TypeScript 检查。这一层保护的是编译期集成边界；发布前仍需要完成一次真实 DSH + Satori 的运行时往返 E2E。
@@ -115,13 +115,15 @@ SATORI_ALLOWED_LOGINS=telegram:my_bot_id
 SATORI_UNSAFE_ALLOW_ALL=1
 ```
 
-机器人自身消息和 Satori 标记为 bot 的发送者仍会被忽略。
+机器人自身消息会优先通过 Satori `event.selfId` 与发送者 ID 比较后拒绝；`login.user.id` 和 `user.isBot` 作为额外保护。
+
+允许一个群聊频道意味着该频道内的发送者都能通过频道准入，但不同发送者仍映射到不同 DSH session。对于 Satori `Channel.Type.TEXT`（群聊/文本频道），插件要求事件带有源 `message.id`，并在回复中引用该消息；缺少源消息 ID 的群聊事件会被忽略，避免并发回复失去归属。
 
 ## 文本消息
 
 Satori wire 上的 `message.content` 是元素序列化字符串。插件使用 Satori 官方 `@satorijs/element` parser 解析它，只把 text 节点送入 DSH；图片、mention、quote 等非文本元素暂不进入模型。没有文本的消息会被忽略。
 
-DSH 返回的普通文本也通过同一个 Satori element 库序列化成 text 内容后再发送，因此 `<at/>`、`<img/>` 等模型输出会作为普通文本显示，不会被 Satori 解释成消息元素。
+DSH 返回的普通文本也通过同一个 Satori element 库序列化，因此 `<at/>`、`<img/>` 等模型输出会作为普通文本显示，不会被 Satori 解释成消息元素。群聊回复会在安全转义后的模型文本前添加标准 `<quote id="..."/>` 传输元素；这个 quote 来自源 Satori 消息元数据，不进入模型上下文。
 
 ## Session 映射
 
@@ -147,21 +149,28 @@ sequenceDiagram
     IM->>S: 消息
     S->>P: message-created
     P->>P: snake_case 归一化
-    P->>P: element parse + 准入检查
+    P->>P: element parse + 准入 + source message id
     P->>D: followup(user message)
     D-->>P: inbox/claimed(messageId, turn)
-    D-->>P: assistant/message(turn)
+    D-->>P: assistant/message(turn)*
     D-->>P: turn/end(turn, reason)
-    P->>P: final text -> Satori text serialization
+    P->>P: 最后一次 committed assistant message 决定最终文本
+    P->>P: 群聊添加 source quote + 安全文本序列化
     P->>S: completed/max-tokens 才 message.create
     S-->>IM: 文本回复
 ```
 
-插件只转发与该 Satori 输入精确关联的 DSH turn。`error`、`aborted`、`blocked` 和 `interrupted` turn 不会把之前的中间 assistant text 当作最终回复发送；`max-tokens` 会发送已经提交的文本。
+插件只转发与该 Satori 输入精确关联的 DSH turn。每个 `assistant/message` 都会覆盖该 turn 的最终候选状态；如果最后一次已提交 assistant message 没有可见文本，之前的文本不会被当成最终回复。`error`、`aborted`、`blocked` 和 `interrupted` turn 不发送回复；`max-tokens` 会发送其最后一次已提交且可见的文本。
 
-## 重连
+## 重连与交付语义
 
-插件保存最近收到的 Satori event sequence，并在重连 IDENTIFY 时带回 `sn`。连续连接只有在收到 `READY` 后才会重置退避计数。普通断线使用指数退避；Satori 以 `4004 invalid token` 关闭连接时停止自动重连并记录原因，等待配置修正或插件重载。
+插件保存最近**收到**的 Satori event sequence，并在重连 IDENTIFY 时带回 `sn`。连续连接只有在收到 `READY` 后才会重置退避计数。普通断线使用指数退避；Satori 以 `4004 invalid token` 关闭连接时停止自动重连并记录原因，等待配置修正或插件重载。
+
+`sn` 是传输接收游标，不是“已经成功送入 DSH”的确认。当前 inbound 和 outbound 都按 at-most-once 思路处理：事件进入本地 handler 后不会因为后续业务失败而回退 `sn`；`message.create` 失败会记录错误，但不会在没有幂等键的情况下盲目重试。Satori Server 是否能按 `sn` replay 漏收事件取决于实际 Server 版本和它可用的 resume buffer，必须在真实 E2E 中验证。
+
+## 生命周期
+
+插件卸载时会先关闭新的消息准入，并启动 `SessionRouter.dispose()`。Router 会立即 abort 可取消的 session-persistence 查询，再与 Satori client 的 inbound/outbound drain 并行收敛；已经进入 DSH `agents.create/resume` 且不能取消的工作会在返回后按现有 ownership 检查处置。
 
 ## 开发
 

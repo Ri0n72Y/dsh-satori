@@ -23,6 +23,12 @@ export function satoriPlainText(content: string): string {
   return Element('text', { content }).toString()
 }
 
+export function satoriReplyText(content: string, replyToMessageId?: string): string {
+  const text = satoriPlainText(content)
+  if (!replyToMessageId) return text
+  return `${Element('quote', { id: replyToMessageId }).toString()}${text}`
+}
+
 function appendText(element: ElementLike, parts: string[]): void {
   if (element.type === 'text') {
     const content = element.attrs?.content

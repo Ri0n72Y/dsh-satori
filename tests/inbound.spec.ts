@@ -20,6 +20,13 @@ const denyByDefault = compileAdmissionPolicy({
   unsafeAllowAll: false,
 })
 
+const allowAll = compileAdmissionPolicy({
+  allowedUsers: [],
+  allowedChannels: [],
+  allowedLogins: [],
+  unsafeAllowAll: true,
+})
+
 describe('inboundMessage', () => {
   it('denies unlisted senders by default', () => {
     expect(inboundMessage(event, denyByDefault)).toBeUndefined()
@@ -42,6 +49,27 @@ describe('inboundMessage', () => {
         userId: 'user-1',
       },
     })
+  })
+
+  it('keeps the source message id for group replies while direct replies stay unquoted', () => {
+    const group = inboundMessage({
+      ...event,
+      channel: { id: 'room-1', type: 0 },
+      message: { id: 'source-1', content: 'group question' },
+    }, allowAll)
+    const direct = inboundMessage(event, allowAll)
+
+    expect(group?.target).toEqual({
+      platform: 'telegram',
+      selfId: 'bot-1',
+      channelId: 'room-1',
+      replyToMessageId: 'source-1',
+    })
+    expect(direct?.target).toEqual({ platform: 'telegram', selfId: 'bot-1', channelId: 'room-1' })
+  })
+
+  it('rejects a text-channel event without a source message id because its reply cannot be correlated', () => {
+    expect(inboundMessage({ ...event, channel: { id: 'room-1', type: 0 } }, allowAll)).toBeUndefined()
   })
 
   it('accepts raw ids containing colons and canonicalizes encoded ids', () => {
@@ -76,14 +104,16 @@ describe('inboundMessage', () => {
     expect(inboundMessage(event, policy)).toBeDefined()
   })
 
+  it('rejects the login selfId even when optional bot metadata is absent', () => {
+    expect(inboundMessage({
+      ...event,
+      login: {},
+      user: { id: 'bot-1' },
+    }, allowAll)).toBeUndefined()
+  })
+
   it('rejects bot-authored messages even when unsafeAllowAll is enabled', () => {
-    const policy = compileAdmissionPolicy({
-      allowedUsers: [],
-      allowedChannels: [],
-      allowedLogins: [],
-      unsafeAllowAll: true,
-    })
-    expect(inboundMessage({ ...event, user: { id: 'other-bot', isBot: true } }, policy)).toBeUndefined()
+    expect(inboundMessage({ ...event, user: { id: 'other-bot', isBot: true } }, allowAll)).toBeUndefined()
   })
 
   it('can restrict the Satori login that is allowed to drive DSH', () => {
@@ -97,12 +127,6 @@ describe('inboundMessage', () => {
   })
 
   it('ignores messages whose Satori content contains no text nodes', () => {
-    const policy = compileAdmissionPolicy({
-      allowedUsers: [],
-      allowedChannels: [],
-      allowedLogins: [],
-      unsafeAllowAll: true,
-    })
-    expect(inboundMessage({ ...event, message: { content: '<img src="x"/>' } }, policy)).toBeUndefined()
+    expect(inboundMessage({ ...event, message: { content: '<img src="x"/>' } }, allowAll)).toBeUndefined()
   })
 })

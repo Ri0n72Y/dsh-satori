@@ -1,4 +1,4 @@
-import { satoriPlainText } from './satori-message.js'
+import { satoriReplyText } from './satori-message.js'
 import { decodeSatoriServerPayload, SatoriOpcode, type SatoriEvent } from './satori-protocol.js'
 
 export interface SatoriClientOptions {
@@ -15,6 +15,7 @@ export interface SatoriTarget {
   platform: string
   selfId: string
   channelId: string
+  replyToMessageId?: string
 }
 
 interface CloseEventLike {
@@ -104,7 +105,7 @@ export class SatoriClient {
       },
       body: JSON.stringify({
         channel_id: target.channelId,
-        content: satoriPlainText(content),
+        content: satoriReplyText(content, target.replyToMessageId),
       }),
       signal,
     })

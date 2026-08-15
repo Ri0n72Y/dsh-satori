@@ -50,7 +50,9 @@ export class ReplyTracker<TAgent extends AgentLike> {
 
   assistant(sessionId: string, turn: number, text: string): void {
     const claimed = this.turns.get(turnKey(sessionId, turn))
-    if (claimed) claimed.text = text
+    if (!claimed) return
+    if (text) claimed.text = text
+    else delete claimed.text
   }
 
   failTurn(agent: TAgent, turn: number): void {
