@@ -3,7 +3,7 @@
 ```mermaid
 sequenceDiagram
     participant U as IM user
-    participant S as Satori server
+    participant S as Koishi / Satori runtime
     participant C as SatoriClient
     participant E as Satori element codec
     participant G as Admission
@@ -19,32 +19,31 @@ sequenceDiagram
     C->>G: selfId + user + channel + message.id
     G-->>C: admitted target + identity
     C->>R: withAgent(identity)
-    R->>R: capacity critical section
-    R->>R: cancellable persistence lookup
+    R->>R: capacity gate + cancellable persistence lookup
     R->>A: get, resume, or create
     R->>A: verify live identity
     C->>T: queue DSH messageId + Satori target
     C->>A: followup(user message)
     A-->>T: agent/inbox/claimed(messageId, turn)
-    loop every committed provider response in the turn
+    loop each committed provider response
         A-->>T: assistant/message(turn)
         T->>T: replace final visible-text candidate, including empty
     end
     A-->>T: turn/end(turn, reason)
     alt completed or max-tokens with visible final text
         T-->>C: correlated final reply
-        opt Satori Channel.Type.TEXT
-            C->>E: prepend quote(source message.id)
+        opt Channel.Type.TEXT
+            C->>E: quote(source message.id)
         end
-        C->>E: serialize assistant text safely
+        C->>E: serialize assistant text
         E-->>C: quote metadata + escaped text
         C->>S: POST v1/message.create
-        S-->>U: correlated assistant reply
-    else no final text / error / aborted / blocked / interrupted
-        T->>T: clear tracked turn without sending
+        S-->>U: assistant reply
+    else no final text or failed turn
+        T->>T: clear tracked turn
     end
 ```
 
-Session identity uses a bounded deterministic hash of `platform + selfId + channelId + userId`. The raw identity remains in runtime routing data rather than the DSH SessionId. A text/group channel requires a source `message.id` so concurrent replies can preserve their origin; direct channels do not add a quote.
+Session identity is a bounded hash of `platform + selfId + channelId + userId`. Group replies require a source `message.id`; direct replies do not add a quote.
 
-On teardown, `SessionRouter.dispose()` marks the router closed and aborts cancellable `sessionPersistence.list(signal)` work before waiting for its capacity gate. Router disposal and `SatoriClient.stop()` then drain concurrently. Satori `sn` is advanced on receipt, so it is a transport cursor rather than an end-to-end processing acknowledgement.
+During teardown, the router aborts cancellable persistence work before draining owned agents. Satori `sn` advances when an event is received, so it is a transport cursor rather than an end-to-end processing acknowledgement.
