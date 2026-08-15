@@ -12,7 +12,8 @@ it('trims and resolves an explicitly configured workspace', () => {
 
 describe('WorkspaceResolver', () => {
   it('reuses an existing DSH workspace for the same canonical directory', async () => {
-    const workspace = { path: '/repo', attachSession: vi.fn(async () => undefined) }
+    const path = resolveWorkspace('/repo') as string
+    const workspace = { path, attachSession: vi.fn(async () => undefined) }
     const registry = {
       resolveByPath: vi.fn(async () => workspace),
       create: vi.fn(async () => workspace),
@@ -20,13 +21,14 @@ describe('WorkspaceResolver', () => {
     const ctx = { get: (name: string) => name === 'workspaceRegistry' ? registry : undefined }
     const resolver = new WorkspaceResolver(ctx as never, '/repo')
 
-    await expect(resolver.current()).resolves.toMatchObject({ path: '/repo' })
-    expect(registry.resolveByPath).toHaveBeenCalledOnce()
+    await expect(resolver.current()).resolves.toMatchObject({ path })
+    expect(registry.resolveByPath).toHaveBeenCalledWith(path)
     expect(registry.create).not.toHaveBeenCalled()
   })
 
   it('registers the directory as a workspace when no workspace owns it', async () => {
-    const workspace = { path: '/repo', attachSession: vi.fn(async () => undefined) }
+    const path = resolveWorkspace('/repo') as string
+    const workspace = { path, attachSession: vi.fn(async () => undefined) }
     const registry = {
       resolveByPath: vi.fn(async () => undefined),
       create: vi.fn(async () => workspace),
@@ -34,7 +36,7 @@ describe('WorkspaceResolver', () => {
     const ctx = { get: (name: string) => name === 'workspaceRegistry' ? registry : undefined }
     const resolver = new WorkspaceResolver(ctx as never, '/repo')
 
-    await expect(resolver.current()).resolves.toMatchObject({ path: '/repo' })
-    expect(registry.create).toHaveBeenCalledWith('/repo')
+    await expect(resolver.current()).resolves.toMatchObject({ path })
+    expect(registry.create).toHaveBeenCalledWith(path)
   })
 })

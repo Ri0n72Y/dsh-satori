@@ -13,6 +13,7 @@ flowchart LR
     IM[IM platforms] <--> KS[Koishi / Satori Runtime]
     KS <--> Plugin[dsh-satori]
     Plugin <--> DSH[DeepSeek Harness]
+    Plugin --> WS[DSH Workspace]
 ```
 
 Platform accounts, tokens, app IDs, and secrets belong in the Koishi / Satori Runtime. They are not configured in DSH or `dsh-satori`. Prepare a runtime with the required platform adapter and Satori Server before connecting this plugin.
@@ -29,7 +30,7 @@ See [`docs/architecture.md`](docs/architecture.md), [`docs/data-flow.md`](docs/d
 - Node.js `^22.19.0 || >=24.0.0`.
 - A configured Koishi / Satori Runtime with at least one working IM adapter.
 
-The source compatibility baseline is pinned to DeepSeek Harness `47f943859bef60e4160492346772ded9b24f765a`, repository version `0.1.0-rc.5`. Runtime E2E against published packages used `0.1.0-rc.6`.
+The source compatibility baseline is pinned to DeepSeek Harness `47f943859bef60e4160492346772ded9b24f765a`, repository version `0.1.0-rc.5`. Published DSH peers used by this plugin start at `0.1.0-rc.6`.
 
 ## Install into DSH
 
@@ -70,7 +71,11 @@ SATORI_ALLOWED_CHANNELS=discord:987654321
 SATORI_ALLOWED_LOGINS=telegram:my_bot_id
 ```
 
-`SATORI_TOKEN` and `SATORI_CWD` are optional. If `SATORI_CWD` is omitted, fresh sessions do not write `meta.cwd`.
+`SATORI_TOKEN` and `SATORI_CWD` are optional.
+
+The Web profile adds a `dsh-satori` card under `Settings > Plugins > Configurable`. Its `Workspace directory` field controls the working directory for Satori sessions and overrides `SATORI_CWD`. An existing DSH Workspace for that directory is reused; otherwise the existing directory is registered as a new Workspace. Clearing the field disables workspace binding.
+
+Changing Workspace derives a new SessionId for the same Satori sender, which prevents a DSH conversation from being resumed across projects. The plugin uses DSH's canonical workspace path and calls `attachSession()` after session creation so the conversation appears with the other sessions in that Workspace.
 
 External senders are denied by default. Configure at least `SATORI_ALLOWED_USERS` or `SATORI_ALLOWED_CHANNELS`. Separate multiple values with commas. IDs may contain `:`. Use this only in a trusted test environment:
 
@@ -86,7 +91,7 @@ SATORI_UNSAFE_ALLOW_ALL=1
 - Only `completed` or `max-tokens` turns correlated to the originating Satori input can produce a reply. If the last committed assistant message has no visible text, earlier text is not reused.
 - `sn` is a receive cursor. Inbound and outbound delivery are currently at-most-once oriented; replay depends on the deployed Satori Server.
 
-Session IDs are derived from `platform + selfId + channelId + userId` with SHA-256, so full external IDs are not written into persistence directory names. The plugin owns at most 32 live agents by default and only evicts idle agents.
+Session IDs are derived from the Satori identity fields and current Workspace path with SHA-256, so full external IDs and directory paths are not written into persistence directory names. The plugin owns at most 32 live agents by default and only evicts idle agents.
 
 ## Development and verification
 
@@ -99,11 +104,11 @@ pnpm pack
 
 Current verification:
 
-- Vitest: 43/43 tests passed across 8 files.
-- Build passed and produced ESM output.
-- Strict typecheck passed against declarations built from the pinned DSH `0.1.0-rc.5` source baseline.
-- Runtime Satori wire E2E passed 13/13 checks over real WebSocket and HTTP. The DSH side used stubs and peer packages came from the published `0.1.0-rc.6` release.
-- A full E2E with the real DSH Agent Loop, a model, and a real Satori Server is still pending.
+- Vitest: 47/47 tests passed across 8 files.
+- Host ESM and the Web client bundle both build and pack successfully.
+- Strict typecheck passed against the pinned DSH `0.1.0-rc.5` source declarations, including Workspace, Settings, and WebServer APIs.
+- Satori wire runtime E2E passed 13/13 checks. That test predates the Workspace panel feature and uses DSH stubs.
+- A full E2E with the real DSH Web settings card, WorkspaceRegistry, Agent Loop, a model, and a real Satori Server is still pending.
 
 Development rules are in [`AGENTS.md`](AGENTS.md).
 
