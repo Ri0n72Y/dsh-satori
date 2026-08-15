@@ -1,14 +1,40 @@
-import { resolve } from 'node:path'
-import { describe, expect, it } from 'vitest'
-import { resolveWorkspace } from '../src/workspace.js'
+import { describe, expect, it, vi } from 'vitest'
+import { resolveWorkspace, WorkspaceResolver } from '../src/workspace.js'
 
-describe('resolveWorkspace', () => {
-  it('keeps omitted or blank cwd unset', () => {
-    expect(resolveWorkspace()).toBeUndefined()
-    expect(resolveWorkspace('   ')).toBeUndefined()
+it('keeps workspace unset when cwd is missing or blank', () => {
+  expect(resolveWorkspace()).toBeUndefined()
+  expect(resolveWorkspace('   ')).toBeUndefined()
+})
+
+it('trims and resolves an explicitly configured workspace', () => {
+  expect(resolveWorkspace('  ./workspace  ')).toMatch(/workspace$/)
+})
+
+describe('WorkspaceResolver', () => {
+  it('reuses an existing DSH workspace for the same canonical directory', async () => {
+    const workspace = { path: '/repo', attachSession: vi.fn(async () => undefined) }
+    const registry = {
+      resolveByPath: vi.fn(async () => workspace),
+      create: vi.fn(async () => workspace),
+    }
+    const ctx = { get: (name: string) => name === 'workspaceRegistry' ? registry : undefined }
+    const resolver = new WorkspaceResolver(ctx as never, '/repo')
+
+    await expect(resolver.current()).resolves.toMatchObject({ path: '/repo' })
+    expect(registry.resolveByPath).toHaveBeenCalledOnce()
+    expect(registry.create).not.toHaveBeenCalled()
   })
 
-  it('trims and resolves a configured cwd to an absolute path', () => {
-    expect(resolveWorkspace(' ./safe-workspace ')).toBe(resolve('./safe-workspace'))
+  it('registers the directory as a workspace when no workspace owns it', async () => {
+    const workspace = { path: '/repo', attachSession: vi.fn(async () => undefined) }
+    const registry = {
+      resolveByPath: vi.fn(async () => undefined),
+      create: vi.fn(async () => workspace),
+    }
+    const ctx = { get: (name: string) => name === 'workspaceRegistry' ? registry : undefined }
+    const resolver = new WorkspaceResolver(ctx as never, '/repo')
+
+    await expect(resolver.current()).resolves.toMatchObject({ path: '/repo' })
+    expect(registry.create).toHaveBeenCalledWith('/repo')
   })
 })

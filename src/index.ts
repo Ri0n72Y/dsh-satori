@@ -9,7 +9,8 @@ import { assistantText } from './message.js'
 import { ReplyTracker } from './reply-tracker.js'
 import { SatoriClient } from './satori-client.js'
 import { SessionRouter } from './session-router.js'
-import { resolveWorkspace } from './workspace.js'
+import { WorkspaceResolver } from './workspace.js'
+import { installWorkspaceConfiguration } from './workspace-settings.js'
 
 export const name = 'dsh-satori'
 export const inject = ['agents', 'sessionPersistence']
@@ -37,7 +38,7 @@ export const Config: Schema<Config> = Schema.object({
   sessionPrefix: Schema.string()
     .description('Prefix used for deterministic DSH session IDs')
     .default('satori'),
-  cwd: Schema.string().description('Optional working directory for newly created DSH sessions'),
+  cwd: Schema.string().description('Deployment default workspace directory for Satori sessions'),
   provider: Schema.string().description('Optional DSH model provider override'),
   model: Schema.string().description('Optional DSH model override'),
   allowedUsers: Schema.array(String)
@@ -82,9 +83,11 @@ export function apply(ctx: Context, config: Config): void {
       }
     : undefined
 
+  const workspaceResolver = new WorkspaceResolver(ctx, config.cwd)
+  installWorkspaceConfiguration(ctx, config.cwd, workspaceResolver)
+
   const router = new SessionRouter(ctx, {
     prefix: config.sessionPrefix,
-    cwd: resolveWorkspace(config.cwd),
     agentOptions,
     maxLiveAgents: config.maxLiveAgents,
     idleTtlMs: config.idleTtlMs,
@@ -101,6 +104,7 @@ export function apply(ctx: Context, config: Config): void {
     if (closed) return
     const inbound = inboundMessage(event, admission)
     if (!inbound) return
+    const workspace = await workspaceResolver.current()
 
     await router.withAgent(inbound.identity, (agent) => {
       if (closed) return
@@ -119,7 +123,7 @@ export function apply(ctx: Context, config: Config): void {
         replies.discard(agent, message.id)
         throw error
       }
-    })
+    }, workspace)
   })
 
   ctx.on('agent/inbox/claimed', ({ agent, message, turn }) => {
@@ -185,3 +189,4 @@ export { plainTextFromSatori, satoriReplyText } from './satori-message.js'
 export { ReplyTracker } from './reply-tracker.js'
 export { SatoriClient } from './satori-client.js'
 export { SessionRouter, sessionIdFor } from './session-router.js'
+export { WorkspaceResolver } from './workspace.js'

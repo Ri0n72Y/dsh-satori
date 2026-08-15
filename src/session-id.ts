@@ -10,9 +10,15 @@ export interface SessionIdentity {
 const LABEL_LENGTH = 20
 const DIGEST_LENGTH = 32
 
-export function sessionKeyFor(identity: SessionIdentity, prefix = 'satori'): string {
+export function sessionKeyFor(
+  identity: SessionIdentity,
+  prefix = 'satori',
+  workspacePath?: string,
+): string {
+  const parts = [prefix, identity.platform, identity.selfId, identity.channelId, identity.userId]
+  if (workspacePath !== undefined) parts.push(workspacePath)
   const digest = createHash('sha256')
-    .update(JSON.stringify([prefix, identity.platform, identity.selfId, identity.channelId, identity.userId]))
+    .update(JSON.stringify(parts))
     .digest('base64url')
     .slice(0, DIGEST_LENGTH)
   return `${label(prefix)}:${label(identity.platform)}:${digest}`

@@ -21,6 +21,12 @@ describe('sessionKeyFor', () => {
   it('changes when any identity component changes', () => {
     expect(sessionKeyFor(identity)).not.toBe(sessionKeyFor({ ...identity, userId: '@bob:example.org' }))
   })
+
+  it('uses the workspace path as an execution-identity discriminator', () => {
+    expect(sessionKeyFor(identity, 'satori', '/repo/a'))
+      .not.toBe(sessionKeyFor(identity, 'satori', '/repo/b'))
+    expect(sessionKeyFor(identity)).toBe(sessionKeyFor(identity, 'satori'))
+  })
 })
 
 describe('assistantText', () => {

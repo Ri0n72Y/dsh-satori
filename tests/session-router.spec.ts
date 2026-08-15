@@ -20,7 +20,6 @@ function harness(options: {
   detachOnDisposeFailure?: boolean
   delayedCreate?: boolean
   delayedList?: boolean
-  cwd?: string | null
 } = {}) {
   const live = new Map<string, FakeAgent>()
   const creates: FakeCreateOptions[] = []
@@ -84,7 +83,6 @@ function harness(options: {
   }
   const router = new SessionRouter(ctx as never, {
     prefix: 'satori',
-    cwd: options.cwd === null ? undefined : (options.cwd ?? '/tmp'),
     maxLiveAgents: 1,
     idleTtlMs: 60_000,
   })
@@ -98,8 +96,8 @@ function harness(options: {
 }
 
 describe('SessionRouter', () => {
-  it('omits cwd metadata when the plugin workspace is not configured', async () => {
-    const { router, creates } = harness({ cwd: null })
+  it('omits cwd metadata when no workspace is selected', async () => {
+    const { router, creates } = harness()
     await router.withAgent(identity('one'), () => undefined)
 
     expect(creates()).toHaveLength(1)
@@ -107,11 +105,31 @@ describe('SessionRouter', () => {
     await router.dispose()
   })
 
-  it('passes an explicitly configured workspace into fresh DSH session metadata', async () => {
-    const { router, creates } = harness({ cwd: '/safe/workspace' })
-    await router.withAgent(identity('one'), () => undefined)
+  it('creates the session in the selected workspace and attaches it to workspace accounting', async () => {
+    const { router, creates } = harness()
+    const attached: string[] = []
+    const workspace = {
+      path: '/safe/workspace',
+      async attachSession(sessionId: string) { attached.push(sessionId) },
+    }
+    await router.withAgent(identity('one'), () => undefined, workspace as never)
 
     expect(creates()[0]?.meta).toEqual({ cwd: '/safe/workspace' })
+    expect(attached).toEqual([creates()[0]?.sessionId])
+    await router.dispose()
+  })
+
+  it('uses different session identities for different workspaces', async () => {
+    const { router, creates } = harness()
+    await router.withAgent(identity('one'), () => undefined, {
+      path: '/repo/a', attachSession: async () => undefined,
+    } as never)
+    await router.withAgent(identity('one'), () => undefined, {
+      path: '/repo/b', attachSession: async () => undefined,
+    } as never)
+
+    expect(creates()).toHaveLength(2)
+    expect(creates()[0]?.sessionId).not.toBe(creates()[1]?.sessionId)
     await router.dispose()
   })
 

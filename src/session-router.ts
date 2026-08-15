@@ -3,10 +3,10 @@ import type { Agent, AgentHandle, AgentOptions } from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-session-persistence'
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import { sessionKeyFor, type SessionIdentity } from './session-id.js'
+import type { SessionWorkspace } from './workspace.js'
 
 export interface SessionRouterOptions {
   prefix: string
-  cwd?: string
   agentOptions?: AgentOptions
   maxLiveAgents: number
   idleTtlMs: number
@@ -20,26 +20,34 @@ interface OwnedAgent {
 
 type AgentUse<T> = (agent: Agent) => T | Promise<T>
 
-export function sessionIdFor(identity: SessionIdentity, prefix = 'satori'): SessionId {
-  return sessionKeyFor(identity, prefix) as SessionId
+export function sessionIdFor(
+  identity: SessionIdentity,
+  prefix = 'satori',
+  workspacePath?: string,
+): SessionId {
+  return sessionKeyFor(identity, prefix, workspacePath) as SessionId
 }
 
 export class SessionRouter {
   private readonly owned = new Map<SessionId, OwnedAgent>()
-  private readonly abortController = new AbortController()
   private gate: Promise<void> = Promise.resolve()
   private closed = false
+  private readonly abortController = new AbortController()
 
   constructor(
     private readonly ctx: Context,
     private readonly options: SessionRouterOptions,
   ) {}
 
-  withAgent<T>(identity: SessionIdentity, use: AgentUse<T>): Promise<T> {
+  withAgent<T>(
+    identity: SessionIdentity,
+    use: AgentUse<T>,
+    workspace?: SessionWorkspace,
+  ): Promise<T> {
     return this.exclusive(async () => {
       if (this.closed) throw new Error('dsh-satori session router is disposed')
-      const sessionId = sessionIdFor(identity, this.options.prefix)
-      const agent = await this.resolveAgent(sessionId)
+      const sessionId = sessionIdFor(identity, this.options.prefix, workspace?.path)
+      const agent = await this.resolveAgent(sessionId, workspace)
       if (this.ctx.agents.get(sessionId) !== agent) {
         throw new Error(`dsh-satori agent ${sessionId} was disposed before delivery`)
       }
@@ -53,10 +61,8 @@ export class SessionRouter {
   }
 
   async dispose(): Promise<void> {
-    if (!this.closed) {
-      this.closed = true
-      this.abortController.abort(new Error('dsh-satori session router is disposed'))
-    }
+    this.closed = true
+    this.abortController.abort(new Error('dsh-satori session router is disposed'))
     await this.exclusive(async () => {
       const failures: unknown[] = []
       for (const [sessionId, entry] of [...this.owned]) {
@@ -72,7 +78,7 @@ export class SessionRouter {
     })
   }
 
-  private async resolveAgent(sessionId: SessionId): Promise<Agent> {
+  private async resolveAgent(sessionId: SessionId, workspace?: SessionWorkspace): Promise<Agent> {
     const live = this.ctx.agents.get(sessionId)
     const owned = this.owned.get(sessionId)
     if (live) {
@@ -82,6 +88,7 @@ export class SessionRouter {
       } else if (owned) {
         await this.disposeOwned(sessionId, owned)
       }
+      await workspace?.attachSession(sessionId)
       return live
     }
 
@@ -97,7 +104,7 @@ export class SessionRouter {
         })
       : await this.ctx.agents.create({
           sessionId,
-          meta: this.options.cwd === undefined ? {} : { cwd: this.options.cwd },
+          meta: workspace === undefined ? {} : { cwd: workspace.path },
           agentOptions: this.options.agentOptions,
         })
 
@@ -108,6 +115,20 @@ export class SessionRouter {
     if (this.ctx.agents.get(sessionId) !== handle.agent) {
       await handle.dispose()
       throw new Error(`dsh-satori agent ${sessionId} was not live after creation`)
+    }
+
+    try {
+      await workspace?.attachSession(sessionId)
+    } catch (error) {
+      try {
+        await handle.dispose()
+      } catch (disposeError) {
+        throw new AggregateError(
+          [error, disposeError],
+          `dsh-satori failed to attach session ${sessionId} to its workspace and dispose the agent`,
+        )
+      }
+      throw error
     }
 
     this.owned.set(sessionId, { handle, lastUsedAt: Date.now() })
@@ -147,10 +168,6 @@ export class SessionRouter {
       await entry.handle.dispose()
       if (this.owned.get(sessionId) === entry) this.owned.delete(sessionId)
     } catch (error) {
-      // DSH AgentHandle teardown is memoized. A second dispose() returns the
-      // same settlement, so retrying a rejected disposer cannot repair it.
-      // The default loop still detaches agent/session in teardown's finally;
-      // release capacity only when the registry confirms that detach happened.
       if (this.ctx.agents.get(sessionId) !== entry.handle.agent) {
         if (this.owned.get(sessionId) === entry) this.owned.delete(sessionId)
       } else {
